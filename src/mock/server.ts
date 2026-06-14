@@ -88,18 +88,50 @@ function sendPdf(res: any, pdfBytes: Uint8Array, filename: string) {
   res.end(Buffer.from(pdfBytes));
 }
 
-function readBody(req: any): Promise<any> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', (chunk: any) => { data += chunk; });
-    req.on('end', () => {
+async function readBody(req: any): Promise<any> {
+  if (req.body !== undefined && req.body !== null) {
+    try {
+      return typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    } catch {
+      return {};
+    }
+  }
+  if (req.readableEnded || req.complete || req.destroyed) {
+    return {};
+  }
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    return {};
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({}), 2000);
+    const chunks: Buffer[] = [];
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+    };
+    const onData = (chunk: any) => { if (!done) chunks.push(Buffer.from(chunk)); };
+    const onEnd = () => {
+      if (done) return;
+      cleanup();
+      const data = Buffer.concat(chunks).toString('utf8');
       try {
         resolve(data ? JSON.parse(data) : {});
-      } catch (e) {
+      } catch {
         resolve({});
       }
-    });
-    req.on('error', reject);
+    };
+    const onError = () => { cleanup(); resolve({}); };
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+    if (typeof req.read === 'function') {
+      try { const _ = req.read(); } catch {}
+    }
   });
 }
 
@@ -562,6 +594,7 @@ export function mockApiPlugin(): Plugin {
                 }, 403);
               }
               task.status = body.targetStatus as TaskStatus;
+              task.statusText = getStatusText(task.status);
               task.timeline.push({
                 id: 't_' + Date.now(),
                 fromStatus: task.status,
@@ -732,6 +765,7 @@ export function mockApiPlugin(): Plugin {
                 }, 400);
               }
               task.status = level === 1 ? TaskStatus.PENDING_ENGINEER_APPROVAL : TaskStatus.PENDING_DIRECTOR_APPROVAL;
+              task.statusText = getStatusText(task.status);
               task.timeline.push({
                 id: 't_' + Date.now(),
                 fromStatus: task.status,
