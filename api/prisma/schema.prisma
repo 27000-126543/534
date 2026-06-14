@@ -1,0 +1,430 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  PENDING_VALIDATION
+  VALIDATION_FAILED
+  HEAD_MODEL_BUILDING
+  HEAD_MODEL_FAILED
+  FORWARD_COMPUTING
+  FORWARD_FAILED
+  SOURCE_INVERTING
+  SOURCE_FAILED
+  TARGET_EVALUATING
+  TARGET_FAILED
+  PENDING_ENGINEER_APPROVAL
+  ENGINEER_REJECTED
+  PENDING_DIRECTOR_APPROVAL
+  DIRECTOR_REJECTED
+  PUSHING_TO_NAVIGATION
+  COMPLETED
+  SUSPENDED
+  ABNORMAL_FALLBACK
+}
+
+enum AlgorithmType {
+  SLORETA
+  BEAMFORMING
+  MNLS
+  LORETA
+  DICS
+}
+
+enum AlertType {
+  RESIDUAL_EXCEEDED
+  SOURCE_OFFSET_EXCEEDED
+  COMPUTATION_TIMEOUT
+  DATA_QUALITY_ISSUE
+  PATIENT_DEVIATION
+}
+
+enum AlertSeverity {
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RoleCode {
+  ADMIN
+  ENGINEER
+  DIRECTOR
+  EXPERT
+  CHIEF_SCIENTIST
+  TECHNICIAN
+}
+
+enum FileType {
+  MRI_SEGMENTATION
+  ELECTRODE_POSITIONS
+  EEG_SIGNAL
+  HEAD_MODEL
+  SOURCE_RESULT
+  TARGET_PLAN
+  REPORT_PDF
+}
+
+enum FrequencyBand {
+  DELTA
+  THETA
+  ALPHA
+  BETA
+  GAMMA
+}
+
+enum StimulationPattern {
+  SINGLE_PULSE
+  PAIRED_PULSE
+  TBS
+  RTMS
+  THETA_BURST
+}
+
+enum BrainRegion {
+  PREFRONTAL
+  MOTOR
+  PARIETAL
+  TEMPORAL
+  OCCIPITAL
+  CEREBELLUM
+  LEFT_DLPFC
+  RIGHT_DLPFC
+  M1
+  SMA
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String
+  code        RoleCode @unique
+  permissions Json
+  description String?
+  createdAt   DateTime @default(now())
+  users       User[]
+}
+
+model User {
+  id               String         @id @default(uuid())
+  username         String         @unique
+  email            String         @unique
+  passwordHash     String
+  roleId           String
+  role             Role           @relation(fields: [roleId], references: [id])
+  fullName         String
+  title            String
+  isActive         Boolean        @default(true)
+  twoFactorSecret  String?
+  lastLogin        DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  createdTasks     Task[]         @relation("TaskCreator")
+  approvedTasks    Approval[]     @relation("ApprovalApprover")
+  reviewedAlerts   AlertReview[]  @relation("AlertReviewer")
+  suspendedPatients PatientSuspension[] @relation("PatientSuspender")
+}
+
+model Patient {
+  id                 String               @id @default(uuid())
+  medicalRecordNo    String               @unique
+  name               String
+  birthDate          DateTime
+  gender             String
+  diagnosis          String?
+  isSuspended        Boolean              @default(false)
+  suspendedAt        DateTime?
+  suspendedById      String?
+  suspendedBy        User?                @relation("PatientSuspender", fields: [suspendedById], references: [id])
+  suspensionReason   String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  tasks              Task[]
+  suspensions        PatientSuspension[]
+}
+
+model PatientSuspension {
+  id                 String   @id @default(uuid())
+  patientId          String
+  patient            Patient  @relation(fields: [patientId], references: [id])
+  triggeredByTaskId  String
+  triggeredByTask    Task     @relation(fields: [triggeredByTaskId], references: [id])
+  deviationMm        Float
+  createdAt          DateTime @default(now())
+}
+
+model Task {
+  id                    String               @id @default(uuid())
+  taskNo                String               @unique
+  patientId             String
+  patient               Patient              @relation(fields: [patientId], references: [id])
+  createdById           String
+  createdBy             User                 @relation("TaskCreator", fields: [createdById], references: [id])
+  taskName              String
+  status                TaskStatus
+  algorithmType         AlgorithmType
+  algorithmParams       Json
+  targetBrainRegion     BrainRegion?
+  notes                 String?
+  headModelId           String?
+  headModel             HeadModel?           @relation(fields: [headModelId], references: [id])
+  forwardResultId       String?
+  forwardResult         ForwardResult?       @relation(fields: [forwardResultId], references: [id])
+  sourceResultId        String?
+  sourceResult          SourceResult?        @relation(fields: [sourceResultId], references: [id])
+  targetPlanId          String?
+  targetPlan            TargetPlan?          @relation(fields: [targetPlanId], references: [id])
+  currentApprovalId     String?
+  currentApproval       Approval?            @relation(fields: [currentApprovalId], references: [id])
+  pushToNavigation      Boolean              @default(false)
+  patientSuspensions    PatientSuspension[]
+  statusHistory         TaskStatusEvent[]
+  files                 TaskFile[]
+  computeLogs           ComputeLog[]
+  approvals             Approval[]
+  alerts                Alert[]
+  reports               Report[]
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([patientId, status])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([algorithmType])
+}
+
+model TaskStatusEvent {
+  id         String     @id @default(uuid())
+  taskId     String
+  task       Task       @relation(fields: [taskId], references: [id])
+  fromStatus TaskStatus?
+  toStatus   TaskStatus
+  reason     String?
+  operatorId String?
+  operator   User?      @relation(fields: [operatorId], references: [id])
+  createdAt  DateTime   @default(now())
+
+  @@index([taskId, createdAt(sort: Desc)])
+}
+
+model TaskFile {
+  id              String   @id @default(uuid())
+  taskId          String
+  task            Task     @relation(fields: [taskId], references: [id])
+  fileType        FileType
+  fileName        String
+  filePath        String
+  fileHash        String
+  fileSize        BigInt
+  isValid         Boolean  @default(true)
+  validationError String?
+  uploadedAt      DateTime @default(now())
+
+  @@index([taskId, fileType])
+  @@index([isValid])
+}
+
+model HeadModel {
+  id                 String   @id @default(uuid())
+  taskId             String   @unique
+  task               Task     @relation(fields: [taskId], references: [id])
+  scalpMesh          Json
+  skullMesh          Json
+  brainMesh          Json
+  conductivityParams Json
+  meshQuality        Float
+  triangleCount      Int
+  createdAt          DateTime @default(now())
+}
+
+model ForwardResult {
+  id               String   @id @default(uuid())
+  taskId           String   @unique
+  task             Task     @relation(fields: [taskId], references: [id])
+  leadfieldMatrix  Json
+  solutionMethod   String
+  computationTime  Float
+  createdAt        DateTime @default(now())
+}
+
+model SourceResult {
+  id                    String              @id @default(uuid())
+  taskId                String              @unique
+  task                  Task                @relation(fields: [taskId], references: [id])
+  currentDensity        Json
+  sourceTimeSeries      Json
+  dipoleParameters      Json
+  confidenceEllipsoid   Json
+  algorithmUsed         AlgorithmType
+  regularizationParam   Float
+  meanResidual          Float
+  sourceSpatialAccuracy Float
+  monitoringMetrics     MonitoringMetric[]
+  createdAt             DateTime            @default(now())
+}
+
+model MonitoringMetric {
+  id                String       @id @default(uuid())
+  sourceResultId    String
+  sourceResult      SourceResult @relation(fields: [sourceResultId], references: [id])
+  timeWindow        Int
+  timeRange         Json
+  residualError     Float
+  sourceCenter      Json
+  offsetFromPrevious Float
+  isAlertTriggered  Boolean      @default(false)
+  alertType         AlertType?
+  alert             Alert?       @relation(fields: [alertId], references: [id])
+  alertId           String?
+  createdAt         DateTime     @default(now())
+
+  @@index([sourceResultId, timeWindow])
+  @@index([isAlertTriggered])
+}
+
+model TargetPlan {
+  id                      String                  @id @default(uuid())
+  taskId                  String                  @unique
+  task                    Task                    @relation(fields: [taskId], references: [id])
+  coilPosition            Json
+  coilOrientation         Json
+  currentIntensity        Float
+  pulseCount              Int
+  pulsePattern            StimulationPattern
+  focalityIndex           Float
+  targetCoverage          Float
+  stimulationVolume       Float
+  targetRegion            BrainRegion
+  isAIRecommended         Boolean                 @default(false)
+  aiRecommendationParams  Json?
+  recommendationModelId   String?
+  recommendationModel     RecommendationModel?  @relation(fields: [recommendationModelId], references: [id])
+  alternativePlans        Json
+  createdAt               DateTime                @default(now())
+}
+
+model RecommendationModel {
+  id                 String       @id @default(uuid())
+  modelVersion       String       @unique
+  modelPath          String
+  featureImportance  Json
+  accuracyScore      Float
+  trainedAt          DateTime
+  deployedAt         DateTime
+  targetPlans        TargetPlan[]
+}
+
+model ComputeLog {
+  id           String   @id @default(uuid())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id])
+  computePhase String
+  logContent   String
+  logLevel     String
+  createdAt    DateTime @default(now())
+
+  @@index([taskId, computePhase])
+}
+
+model Alert {
+  id             String         @id @default(uuid())
+  taskId         String
+  task           Task           @relation(fields: [taskId], references: [id])
+  alertType      AlertType
+  severity       AlertSeverity
+  threshold      Float
+  actualValue    Float
+  unit           String
+  description    String
+  suggestion     String
+  isResolved     Boolean        @default(false)
+  review         AlertReview?
+  monitoringMetricId String?
+  monitoringMetric MonitoringMetric? @relation(fields: [monitoringMetricId], references: [id])
+  createdAt      DateTime       @default(now())
+  resolvedAt     DateTime?
+
+  @@index([taskId, alertType])
+  @@index([severity, isResolved])
+  @@index([createdAt(sort: Desc)])
+}
+
+model AlertReview {
+  id             String       @id @default(uuid())
+  alertId        String       @unique
+  alert          Alert        @relation(fields: [alertId], references: [id])
+  reviewerId     String
+  reviewer       User         @relation("AlertReviewer", fields: [reviewerId], references: [id])
+  approved       Boolean
+  reviewComment  String
+  adjustmentType String
+  newParams      Json?
+  newAlgorithm   AlgorithmType?
+  createdAt      DateTime     @default(now())
+}
+
+model Approval {
+  id             String       @id @default(uuid())
+  taskId         String
+  task           Task         @relation(fields: [taskId], references: [id])
+  approvalLevel  Int
+  approverId     String?
+  approver       User?        @relation("ApprovalApprover", fields: [approverId], references: [id])
+  status         ApprovalStatus @default(PENDING)
+  comment        String?
+  approvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([taskId, approvalLevel])
+  @@index([status, createdAt(sort: Desc)])
+}
+
+model Report {
+  id            String   @id @default(uuid())
+  taskId        String
+  task          Task     @relation(fields: [taskId], references: [id])
+  reportUrl     String
+  reportConfig  Json
+  createdAt     DateTime @default(now())
+}
+
+model AlgorithmConfig {
+  id             String        @id @default(uuid())
+  algorithmName  AlgorithmType @unique
+  defaultParams  Json
+  paramRanges    Json
+  isEnabled      Boolean       @default(true)
+  description    String?
+  updatedAt      DateTime      @updatedAt
+}
+
+model DailyStats {
+  date             DateTime @id
+  totalTasks       Int      @default(0)
+  completedTasks   Int      @default(0)
+  completionRate   Float    @default(0)
+  avgAccuracy      Float    @default(0)
+  avgCoverage      Float    @default(0)
+  alertCount       Int      @default(0)
+  detailedStats    Json
+}
+
+model SystemSettings {
+  id                         String  @id @default(uuid())
+  residualThreshold          Float   @default(10)
+  sourceOffsetThreshold      Float   @default(5)
+  patientDeviationThreshold  Float   @default(8)
+  consecutiveDeviationCount  Int     @default(3)
+  autoSuspendEnabled         Boolean @default(true)
+  navigationSystemUrl        String?
+  updatedAt                  DateTime @updatedAt
+}
