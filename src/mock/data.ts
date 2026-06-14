@@ -337,6 +337,7 @@ export function generateTaskList(count: number = 15): PaginatedResponse<TaskSumm
 export function generateAuthResponse(user: UserSummary): AuthResponse {
   const payload = Buffer.from(JSON.stringify({ id: user.id, roleCode: user.roleCode, exp: Date.now() + 86400000 })).toString('base64');
   return {
+    success: true,
     accessToken: 'mock.' + payload + '.sig',
     refreshToken: 'mock.refresh.' + payload + '.sig',
     user,

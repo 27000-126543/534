@@ -14,48 +14,69 @@ import {
   getValidTransitions
 } from './data';
 import { TaskStatus, ApprovalStatus, RoleCode } from '../../shared/types/enums';
-import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 interface MockTaskStore {
   [taskId: string]: ReturnType<typeof createMockTask>;
 }
 
 const taskStore: MockTaskStore = {};
+const tokenBlacklist = new Set<string>();
 
 function initDefaultTasks() {
   if (Object.keys(taskStore).length === 0) {
-    const t1 = createMockTask(TaskStatus.TARGET_EVALUATING, 100);
-    t1.id = 'task_1';
-    t1.taskNo = 'TSK-2024015';
-    taskStore[t1.id] = t1;
+    const statusList = [
+      { status: TaskStatus.PENDING_VALIDATION, progress: 5 },
+      { status: TaskStatus.HEAD_MODEL_BUILDING, progress: 35 },
+      { status: TaskStatus.FORWARD_COMPUTING, progress: 60 },
+      { status: TaskStatus.SOURCE_INVERTING, progress: 80 },
+      { status: TaskStatus.TARGET_EVALUATING, progress: 100 },
+      { status: TaskStatus.PENDING_ENGINEER_APPROVAL, progress: 100 },
+      { status: TaskStatus.PENDING_DIRECTOR_APPROVAL, progress: 100 },
+      { status: TaskStatus.ENGINEER_REJECTED, progress: 75 },
+      { status: TaskStatus.COMPLETED, progress: 100 },
+    ];
 
-    const t2 = createMockTask(TaskStatus.SOURCE_INVERTING, 65);
-    t2.id = 'task_2';
-    t2.taskNo = 'TSK-2024016';
-    taskStore[t2.id] = t2;
-
-    const t3 = createMockTask(TaskStatus.PENDING_ENGINEER_APPROVAL, 100);
-    t3.id = 'task_3';
-    t3.taskNo = 'TSK-2024017';
-    taskStore[t3.id] = t3;
-
-    const t4 = createMockTask(TaskStatus.PENDING_DIRECTOR_APPROVAL, 100);
-    t4.id = 'task_4';
-    t4.taskNo = 'TSK-2024018';
-    taskStore[t4.id] = t4;
-
-    const t5 = createMockTask(TaskStatus.COMPLETED, 100);
-    t5.id = 'task_5';
-    t5.taskNo = 'TSK-2024014';
-    taskStore[t5.id] = t5;
+    for (let i = 0; i < 15; i++) {
+      const s = statusList[i % statusList.length];
+      const t = createMockTask(s.status, s.progress);
+      t.id = 'task_' + (i + 1);
+      t.taskNo = 'TSK-' + (2024000 + i + 15);
+      if (t.approvals && t.approvals.length > 0) {
+        t.approvals.forEach((a: any, idx: number) => {
+          a.id = 'appr_' + t.id + '_' + (idx + 1);
+          a.taskId = t.id;
+        });
+      }
+      taskStore[t.id] = t;
+    }
   }
 }
 
 initDefaultTasks();
 
+const statusTextMap: Record<string, string> = {
+  [TaskStatus.PENDING_VALIDATION]: '待校验',
+  [TaskStatus.HEAD_MODEL_BUILDING]: '头模型构建中',
+  [TaskStatus.FORWARD_COMPUTING]: '正问题计算中',
+  [TaskStatus.SOURCE_INVERTING]: '源反演计算中',
+  [TaskStatus.TARGET_EVALUATING]: '靶点评估中',
+  [TaskStatus.PENDING_ENGINEER_APPROVAL]: '待工程师审批',
+  [TaskStatus.ENGINEER_REJECTED]: '工程师已驳回',
+  [TaskStatus.PENDING_DIRECTOR_APPROVAL]: '待主任审批',
+  [TaskStatus.DIRECTOR_REJECTED]: '主任已驳回',
+  [TaskStatus.COMPLETED]: '已完成',
+  [TaskStatus.PUSHING_TO_NAVIGATION]: '推送导航系统中',
+};
+
+function getStatusText(status: string): string {
+  return statusTextMap[status] || status;
+}
+
 function sendJson(res: any, data: any, statusCode = 200) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.end(JSON.stringify(data));
 }
 
@@ -63,6 +84,7 @@ function sendPdf(res: any, pdfBytes: Uint8Array, filename: string) {
   res.statusCode = 200;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', pdfBytes.length.toString());
   res.end(Buffer.from(pdfBytes));
 }
 
@@ -96,12 +118,34 @@ function parseQuery(url: string): Record<string, string> {
 
 function authUser(req: any): { id: string; roleCode: RoleCode; user: any } | null {
   const authHeader = req.headers['authorization'] || '';
-  const token = authHeader.replace('Bearer ', '');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authHeader.replace('Bearer ', '').trim();
+  if (!token || token === 'null' || token === 'undefined') {
+    return null;
+  }
+  if (tokenBlacklist.has(token)) {
+    return null;
+  }
   const parsed = parseMockToken(token);
   if (!parsed) return null;
   const userEntry = Object.values(mockUsers).find((u) => u.user.id === parsed.id);
   if (!userEntry) return null;
   return { ...parsed, user: userEntry.user };
+}
+
+function sanitizeText(text: string): string {
+  const result: string[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code <= 255) {
+      result.push(text[i]);
+    } else {
+      result.push('[?]');
+    }
+  }
+  return result.join('');
 }
 
 async function generateReportPdf(task: any): Promise<Uint8Array> {
@@ -113,17 +157,36 @@ async function generateReportPdf(task: any): Promise<Uint8Array> {
   const { width, height } = page.getSize();
   let y = height - 50;
 
+  const fmtNum = (v: number | undefined | null, decimals = 2, fallback = 'N/A'): string => {
+    if (v === undefined || v === null || typeof v !== 'number' || isNaN(v)) return fallback;
+    return v.toFixed(decimals);
+  };
+
   const drawText = (text: string, opts: any = {}) => {
     const font = opts.bold ? helveticaBoldFont : helveticaFont;
     const size = opts.size || 11;
     const color = opts.color || rgb(0, 0, 0);
-    page.drawText(text, {
-      x: opts.x || 50,
-      y,
-      size,
-      font,
-      color
-    });
+    const safeText = sanitizeText(text);
+    try {
+      page.drawText(safeText, {
+        x: opts.x || 50,
+        y,
+        size,
+        font,
+        color
+      });
+    } catch (e) {
+      try {
+        page.drawText('[Unsupported character]', {
+          x: opts.x || 50,
+          y,
+          size,
+          font: helveticaFont,
+          color: rgb(0.5, 0.5, 0.5)
+        });
+      } catch (_) {
+      }
+    }
     if (opts.newline !== false) {
       y -= (opts.lineHeight || size + 4);
     }
@@ -134,68 +197,89 @@ async function generateReportPdf(task: any): Promise<Uint8Array> {
   };
 
   const drawSeparator = () => {
-    page.drawLine({
-      start: { x: 50, y: y + 2 },
-      end: { x: width - 50, y: y + 2 },
-      thickness: 0.5,
-      color: rgb(0.7, 0.7, 0.7)
-    });
+    try {
+      page.drawLine({
+        start: { x: 50, y: y + 2 },
+        end: { x: width - 50, y: y + 2 },
+        thickness: 0.5,
+        color: rgb(0.7, 0.7, 0.7)
+      });
+    } catch (_) {
+    }
     y -= 12;
   };
 
-  drawText('NEUROGUIDE 脑电源定位与TMS靶点优化综合报告', { bold: true, size: 18, color: rgb(0.1, 0.25, 0.6), lineHeight: 28 });
-  drawText(`任务编号: ${task.taskNo}`, { size: 10, color: rgb(0.4, 0.4, 0.4), lineHeight: 16 });
-  drawText(`生成时间: ${new Date().toLocaleString('zh-CN')}`, { size: 10, color: rgb(0.4, 0.4, 0.4), lineHeight: 24 });
+  const pName = sanitizeText(task.patient?.name || 'Unknown');
+  const pDiagnosis = sanitizeText(task.patient?.diagnosis || 'N/A');
+  const pGender = sanitizeText(task.patient?.gender || 'N/A');
+  const tName = sanitizeText(task.taskName || 'Untitled');
+  const algoText = sanitizeText(task.algorithmTypeText || 'sLORETA');
+  const brainRegion = sanitizeText(task.targetBrainRegionText || 'Not specified');
+  const pulseText = sanitizeText(task.targetPlan?.pulsePatternText || '10Hz rTMS');
+  const tradeReason = task.targetPlan?.alternativePlans?.[0]?.tradeOffReason
+    ? sanitizeText(task.targetPlan.alternativePlans[0].tradeOffReason)
+    : 'N/A';
+
+  drawText('NEUROGUIDE EEG Source Localization Report', { bold: true, size: 16, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
+  drawText(`Task No: ${task.taskNo}`, { size: 10, color: rgb(0.4, 0.4, 0.4), lineHeight: 16 });
+  drawText(`Generated: ${new Date().toISOString().replace('T', ' ').slice(0, 19)}`, { size: 10, color: rgb(0.4, 0.4, 0.4), lineHeight: 24 });
   drawSeparator();
 
-  drawText('一、患者与任务基本信息', { bold: true, size: 14, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
-  drawText(`患者姓名: ${task.patient.name}`);
-  drawText(`病历号: ${task.patient.medicalRecordNo}`);
-  drawText(`性别/年龄: ${task.patient.gender} / ${task.patient.age}岁`);
-  drawText(`临床诊断: ${task.patient.diagnosis}`);
-  drawText(`任务名称: ${task.taskName}`);
-  drawText(`算法类型: ${task.algorithmTypeText}`);
-  drawText(`目标脑区: ${task.targetBrainRegionText || '未指定'}`);
+  drawText('1. Patient and Task Information', { bold: true, size: 13, color: rgb(0.1, 0.25, 0.6), lineHeight: 22 });
+  drawText(`Patient Name: ${pName}`);
+  drawText(`Medical Record No: ${task.patient?.medicalRecordNo || 'N/A'}`);
+  drawText(`Gender/Age: ${pGender} / ${task.patient?.age || 'N/A'} years`);
+  drawText(`Diagnosis: ${pDiagnosis}`);
+  drawText(`Task Name: ${tName}`);
+  drawText(`Algorithm: ${algoText}`);
+  drawText(`Target Brain Region: ${brainRegion}`);
   y -= 8;
   drawSeparator();
 
   if (task.sourceResult) {
     const sr = task.sourceResult;
-    drawText('二、皮层电流密度分布分析', { bold: true, size: 14, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
-    drawText(`偶极子位置 (MNI坐标 mm): X=${sr.dipoleParameters.position[0].toFixed(2)}, Y=${sr.dipoleParameters.position[1].toFixed(2)}, Z=${sr.dipoleParameters.position[2].toFixed(2)}`);
-    drawText(`偶极子矩向量: (${sr.dipoleParameters.moment.map((v: number) => v.toFixed(3)).join(', ')})`);
-    drawText(`拟合优度 (GOF): ${(sr.dipoleParameters.goodnessOfFit * 100).toFixed(1)}%`);
-    drawText(`平均残差误差: ${sr.meanResidual.toFixed(2)}%  (阈值: 10%)`);
-    drawText(`源空间定位精度: ${sr.sourceSpatialAccuracy.toFixed(2)} mm`);
-    drawText(`正则化参数 (lambda): ${sr.regularizationParam}`);
+    drawText('2. Cortical Current Density Distribution', { bold: true, size: 13, color: rgb(0.1, 0.25, 0.6), lineHeight: 22 });
+    const pos = sr.dipoleParameters.position;
+    drawText(`Dipole Position (MNI mm): X=${fmtNum(pos?.[0])}, Y=${fmtNum(pos?.[1])}, Z=${fmtNum(pos?.[2])}`);
+    const mom = sr.dipoleParameters.moment || [];
+    drawText(`Dipole Moment: (${mom.map((v: number) => fmtNum(v, 3)).join(', ')})`);
+    drawText(`Goodness of Fit (GOF): ${fmtNum(sr.dipoleParameters.goodnessOfFit ? sr.dipoleParameters.goodnessOfFit * 100 : undefined, 1)}%`);
+    drawText(`Mean Residual: ${fmtNum(sr.meanResidual)}%  (Threshold: 10%)`);
+    drawText(`Source Localization Accuracy: ${fmtNum(sr.sourceSpatialAccuracy)} mm`);
+    drawText(`Regularization Parameter (lambda): ${sr.regularizationParam}`);
     y -= 6;
-    drawText('[注] 皮层电流密度三维分布图见系统3D可视化模块，最大激活簇位于左侧背外侧前额叶(DLPFC)。', {
+    drawText('[Note] See 3D visualization module for full current density map.', {
       size: 9, color: rgb(0.4, 0.4, 0.4), lineHeight: 14
     });
     y -= 8;
     drawSeparator();
 
-    drawText('三、源活动时序分析', { bold: true, size: 14, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
-    drawText(`数据采样率: ${sr.sourceTimeSeries.samplingRate} Hz`);
-    drawText(`信号单位: ${sr.sourceTimeSeries.unit}`);
-    drawText(`分析时间窗: ${task.algorithmParams.timeWindow}ms (重叠率 ${task.algorithmParams.overlap}%)`);
-    drawText(`频段分解: Delta(1-4Hz) / Theta(4-8Hz) / Alpha(8-13Hz) / Beta(13-30Hz) / Gamma(30-100Hz)`);
-    drawText(`异常时间窗数量: ${sr.monitoringMetrics.filter((m: any) => m.isAlertTriggered).length} / ${sr.monitoringMetrics.length}`);
+    drawText('3. Source Activity Time Series', { bold: true, size: 13, color: rgb(0.1, 0.25, 0.6), lineHeight: 22 });
+    drawText(`Sampling Rate: ${sr.sourceTimeSeries.samplingRate} Hz`);
+    drawText(`Signal Unit: ${sr.sourceTimeSeries.unit}`);
+    drawText(`Time Window: ${task.algorithmParams.timeWindow}ms (Overlap ${task.algorithmParams.overlap}%)`);
+    drawText(`Frequency Bands: Delta(1-4Hz) / Theta(4-8Hz) / Alpha(8-13Hz) / Beta(13-30Hz) / Gamma(30-100Hz)`);
+    drawText(`Abnormal Time Windows: ${sr.monitoringMetrics.filter((m: any) => m.isAlertTriggered).length} / ${sr.monitoringMetrics.length}`);
     y -= 6;
-    drawText('[注] 源活动时序曲线和频率谱分析图见系统图表模块。', {
+    drawText('[Note] See chart module for time series and spectrum plots.', {
       size: 9, color: rgb(0.4, 0.4, 0.4), lineHeight: 14
     });
     y -= 8;
     drawSeparator();
 
-    drawText('四、偶极子置信椭圆', { bold: true, size: 14, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
+    drawText('4. Dipole Confidence Ellipsoid', { bold: true, size: 13, color: rgb(0.1, 0.25, 0.6), lineHeight: 22 });
     const ce = sr.confidenceEllipsoid;
-    drawText(`置信度水平: ${(ce.confidenceLevel * 100).toFixed(0)}%`);
-    drawText(`椭球中心: (${ce.center.map((v: number) => v.toFixed(2)).join(', ')}) mm`);
-    drawText(`半轴长度: X=${ce.radii[0].toFixed(2)}, Y=${ce.radii[1].toFixed(2)}, Z=${ce.radii[2].toFixed(2)} mm`);
-    drawText(`体积估算: ${((4 / 3) * Math.PI * ce.radii[0] * ce.radii[1] * ce.radii[2]).toFixed(2)} mm³`);
+    drawText(`Confidence Level: ${fmtNum(ce?.confidenceLevel ? ce.confidenceLevel * 100 : undefined, 0)}%`);
+    const ceCenter = ce?.center || [];
+    drawText(`Ellipsoid Center: (${ceCenter.map((v: number) => fmtNum(v, 2)).join(', ')}) mm`);
+    const ceRadii = ce?.radii || [];
+    drawText(`Principal Radii: X=${fmtNum(ceRadii[0])}, Y=${fmtNum(ceRadii[1])}, Z=${fmtNum(ceRadii[2])} mm`);
+    const volume = ceRadii[0] && ceRadii[1] && ceRadii[2]
+      ? ((4 / 3) * Math.PI * ceRadii[0] * ceRadii[1] * ceRadii[2])
+      : undefined;
+    drawText(`Volume: ${fmtNum(volume)} mm^3`);
     y -= 6;
-    drawText('[注] 置信椭圆2D投影图见系统置信椭圆分析模块。', {
+    drawText('[Note] See confidence ellipse module for 2D projection.', {
       size: 9, color: rgb(0.4, 0.4, 0.4), lineHeight: 14
     });
     y -= 8;
@@ -204,53 +288,70 @@ async function generateReportPdf(task: any): Promise<Uint8Array> {
 
   if (task.targetPlan) {
     const tp = task.targetPlan;
-    drawText('五、TMS线圈放置角度与刺激方案', { bold: true, size: 14, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
-    drawText(`刺激靶点坐标 (MNI mm): (${tp.coilPosition.map((v: number) => v.toFixed(2)).join(', ')})`, { size: 11 });
-    drawText(`线圈放置角度: ${tp.coilOrientation.angleDegrees.toFixed(1)}° (相对前后连合线AC-PC)`, { size: 11 });
-    drawText(`线圈法向量: (${tp.coilOrientation.normal.map((v: number) => v.toFixed(3)).join(', ')})`, { size: 11 });
-    drawText(`手柄方向向量: (${tp.coilOrientation.handleDirection.map((v: number) => v.toFixed(3)).join(', ')})`, { size: 11 });
-    drawText(`刺激电流强度: ${tp.currentIntensity.toFixed(2)} A/m²`, { size: 11 });
-    drawText(`刺激模式: ${tp.pulsePatternText}`, { size: 11 });
-    drawText(`脉冲总数: ${tp.pulseCount}`, { size: 11 });
-    drawText(`刺激体积: ${tp.stimulationVolume.toFixed(2)} cm³`, { size: 11 });
+    drawText('5. TMS Coil Placement and Stimulation Protocol', { bold: true, size: 13, color: rgb(0.1, 0.25, 0.6), lineHeight: 22 });
+    const coilPos = tp.coilPosition || [];
+    drawText(`Target Coordinates (MNI mm): (${coilPos.map((v: number) => fmtNum(v, 2)).join(', ')})`);
+    const coilOrient = tp.coilOrientation || {};
+    drawText(`Coil Orientation: ${fmtNum(coilOrient.angleDegrees, 1)} deg (relative to AC-PC line)`);
+    const normalVec = coilOrient.normal || [];
+    drawText(`Coil Normal Vector: (${normalVec.map((v: number) => fmtNum(v, 3)).join(', ')})`);
+    const handleVec = coilOrient.handleDirection || [];
+    drawText(`Handle Direction: (${handleVec.map((v: number) => fmtNum(v, 3)).join(', ')})`);
+    drawText(`Current Intensity: ${fmtNum(tp.currentIntensity, 2)} A/m^2`);
+    drawText(`Stimulation Pattern: ${pulseText}`);
+    drawText(`Total Pulses: ${tp.pulseCount || 'N/A'}`);
+    drawText(`Stimulation Volume: ${fmtNum(tp.stimulationVolume, 2)} cm^3`);
     y -= 4;
-    drawText('┌─────────────────────────────────────────────────────────┐', { size: 9, color: rgb(0.2, 0.5, 0.9), lineHeight: 13 });
-    drawText(`│ 聚焦指数 (Focality): ${(tp.focalityIndex * 100).toFixed(1)}%    靶区覆盖率 (Coverage): ${(tp.targetCoverage * 100).toFixed(1)}%  │`, { size: 9, color: rgb(0.2, 0.5, 0.9), lineHeight: 13 });
-    drawText('└─────────────────────────────────────────────────────────┘', { size: 9, color: rgb(0.2, 0.5, 0.9), lineHeight: 20 });
-
+    drawText(`Focality: ${fmtNum(tp.focalityIndex ? tp.focalityIndex * 100 : undefined, 1)}%    Coverage: ${fmtNum(tp.targetCoverage ? tp.targetCoverage * 100 : undefined, 1)}%`, { size: 10, color: rgb(0.2, 0.5, 0.9), lineHeight: 14 });
     if (tp.isAIRecommended && tp.aiRecommendationParams) {
-      drawText(`AI推荐置信度: ${(tp.aiRecommendationParams.confidence * 100).toFixed(0)}%   历史相似度: ${(tp.aiRecommendationParams.historicalSimilarity * 100).toFixed(0)}%`, { size: 10, color: rgb(0.2, 0.5, 0.9), lineHeight: 16 });
+      const ai = tp.aiRecommendationParams;
+      drawText(`AI Confidence: ${fmtNum(ai.confidence ? ai.confidence * 100 : undefined, 0)}%   Historical Similarity: ${fmtNum(ai.historicalSimilarity ? ai.historicalSimilarity * 100 : undefined, 0)}%`, {
+        size: 10, color: rgb(0.2, 0.5, 0.9), lineHeight: 16
+      });
     }
     y -= 8;
 
     if (tp.alternativePlans && tp.alternativePlans.length > 0) {
-      drawText('备选刺激方案:', { bold: true, size: 11, lineHeight: 16 });
+      drawText('Alternative Plans:', { bold: true, size: 11, lineHeight: 16 });
       tp.alternativePlans.forEach((alt: any, i: number) => {
-        drawText(`  方案${i + 1}: 位置(${alt.coilPosition.map((v: number) => v.toFixed(1)).join(',')})  角度${alt.angleDegrees.toFixed(0)}°  强度${alt.currentIntensity.toFixed(2)}A/m²`, { size: 9, lineHeight: 13 });
-        drawText(`          聚焦${(alt.focalityIndex * 100).toFixed(0)}%  覆盖${(alt.targetCoverage * 100).toFixed(0)}%  权衡: ${alt.tradeOffReason}`, { size: 9, lineHeight: 16 });
+        const posStr = alt.coilPosition ? alt.coilPosition.map((v: number) => fmtNum(v, 1)).join(',') : 'N/A';
+        const angle = alt.coilOrientation?.angleDegrees ?? alt.angleDegrees;
+        const tradeStr = sanitizeText(alt.tradeOffReason || alt.tradeReason || 'N/A');
+        drawText(`  Plan ${i + 1}: Pos(${posStr})  Angle ${fmtNum(angle, 0)}deg  Intensity ${fmtNum(alt.currentIntensity, 2)}A/m^2`, { size: 9, lineHeight: 13 });
+        drawText(`           Focality ${fmtNum(alt.focalityIndex ? alt.focalityIndex * 100 : undefined, 0)}%  Coverage ${fmtNum(alt.targetCoverage ? alt.targetCoverage * 100 : undefined, 0)}%  Tradeoff: ${tradeStr}`, { size: 9, lineHeight: 16 });
       });
     }
     y -= 6;
     drawSeparator();
   }
 
-  drawText('六、审批流程记录', { bold: true, size: 14, color: rgb(0.1, 0.25, 0.6), lineHeight: 24 });
-  task.approvals.forEach((app: any) => {
-    const statusText = app.status === ApprovalStatus.APPROVED ? '已通过' : app.status === ApprovalStatus.REJECTED ? '已驳回' : '待审批';
-    drawText(`${app.approvalLevelText}: ${statusText}`, { size: 11, lineHeight: 16 });
-    if (app.approver) drawText(`  审批人: ${app.approver.fullName} (${app.approver.title})`, { size: 10, lineHeight: 14 });
-    if (app.comment) drawText(`  审批意见: ${app.comment}`, { size: 10, lineHeight: 18 });
-    if (app.approvedAt) drawText(`  审批时间: ${new Date(app.approvedAt).toLocaleString('zh-CN')}`, { size: 10, lineHeight: 18 });
+  drawText('6. Approval Process Records', { bold: true, size: 13, color: rgb(0.1, 0.25, 0.6), lineHeight: 22 });
+  (task.approvals || []).forEach((app: any) => {
+    const statusText = app.status === ApprovalStatus.APPROVED ? 'APPROVED' : app.status === ApprovalStatus.REJECTED ? 'REJECTED' : 'PENDING';
+    const levelText = app.approvalLevelText ? sanitizeText(app.approvalLevelText) : `Level ${app.approvalLevel}`;
+    drawText(`${levelText}: ${statusText}`, { size: 11, lineHeight: 16 });
+    if (app.approver) {
+      const approverName = sanitizeText(app.approver.fullName || 'Unknown');
+      const approverTitle = sanitizeText(app.approver.title || '');
+      drawText(`  Approver: ${approverName} (${approverTitle})`, { size: 10, lineHeight: 14 });
+    }
+    if (app.comment) {
+      const commentText = sanitizeText(app.comment);
+      drawText(`  Comment: ${commentText}`, { size: 10, lineHeight: 18 });
+    }
+    if (app.approvedAt) {
+      drawText(`  Time: ${new Date(app.approvedAt).toISOString().replace('T', ' ').slice(0, 19)}`, { size: 10, lineHeight: 18 });
+    }
   });
   y -= 10;
 
-  drawText('──────────────────────────────────────────────────────', {
+  drawText('--------------------------------------------------', {
     size: 10, color: rgb(0.6, 0.6, 0.6), lineHeight: 14
   });
-  drawText('本报告由 NeuroGuide 脑电源定位平台自动生成，仅供临床研究参考。', {
+  drawText('This report is automatically generated by NeuroGuide Platform.', {
     size: 9, color: rgb(0.5, 0.5, 0.5), lineHeight: 14
   });
-  drawText('© 2024 NeuroGuide Platform · Clinical Research Edition', {
+  drawText('For clinical research reference only. (c) 2024 NeuroGuide', {
     size: 9, color: rgb(0.5, 0.5, 0.5), lineHeight: 14
   });
 
@@ -272,13 +373,32 @@ export function mockApiPlugin(): Plugin {
         const pathWithoutQuery = url.split('?')[0];
 
         try {
-          // ============ AUTH: /api/auth/* ============
           if (pathWithoutQuery.startsWith('/api/auth')) {
             if (pathWithoutQuery === '/api/auth/login' && method === 'POST') {
               const body = await readBody(req);
+              if (!body.username || !body.password) {
+                return sendJson(res, {
+                  success: false,
+                  error: '用户名和密码不能为空',
+                  message: '用户名和密码不能为空'
+                }, 400);
+              }
               const entry = mockUsers[body.username];
-              if (!entry || entry.password !== body.password) {
-                return sendJson(res, { success: false, message: '用户名或密码错误，请检查后重试' }, 401);
+              if (!entry) {
+                return sendJson(res, {
+                  success: false,
+                  error: '账号不存在，请检查用户名是否正确',
+                  message: '账号不存在',
+                  code: 'USER_NOT_FOUND'
+                }, 401);
+              }
+              if (entry.password !== body.password) {
+                return sendJson(res, {
+                  success: false,
+                  error: '密码错误，请重新输入',
+                  message: '密码错误',
+                  code: 'PASSWORD_INCORRECT'
+                }, 401);
               }
               return sendJson(res, generateAuthResponse(entry.user));
             }
@@ -286,10 +406,19 @@ export function mockApiPlugin(): Plugin {
             if (pathWithoutQuery === '/api/auth/register' && method === 'POST') {
               const body = await readBody(req);
               if (!body.username || !body.password || !body.fullName) {
-                return sendJson(res, { success: false, message: '用户名、密码和姓名不能为空' }, 400);
+                return sendJson(res, {
+                  success: false,
+                  error: '用户名、密码和姓名不能为空',
+                  message: '用户名、密码和姓名不能为空'
+                }, 400);
               }
               if (mockUsers[body.username]) {
-                return sendJson(res, { success: false, message: '该用户名已存在' }, 400);
+                return sendJson(res, {
+                  success: false,
+                  error: '该用户名已被注册，请使用其他用户名',
+                  message: '该用户名已存在',
+                  code: 'USERNAME_EXISTS'
+                }, 400);
               }
               const newUser = {
                 id: 'u_' + Date.now(),
@@ -297,30 +426,64 @@ export function mockApiPlugin(): Plugin {
                 fullName: body.fullName,
                 title: body.title || '临床工程师',
                 roleCode: body.roleCode || RoleCode.ENGINEER,
-                roleName: body.roleCode === RoleCode.ADMIN ? '系统管理员' : body.roleCode === RoleCode.DIRECTOR ? '神经内科主任' : body.roleCode === RoleCode.EXPERT ? '神经电生理专家' : body.roleCode === RoleCode.CHIEF_SCIENTIST ? '首席科学家' : body.roleCode === RoleCode.TECHNICIAN ? '实验室技术员' : '临床工程师'
+                roleName: body.roleCode === RoleCode.ADMIN ? '系统管理员'
+                  : body.roleCode === RoleCode.DIRECTOR ? '神经内科主任'
+                  : body.roleCode === RoleCode.EXPERT ? '神经电生理专家'
+                  : body.roleCode === RoleCode.CHIEF_SCIENTIST ? '首席科学家'
+                  : body.roleCode === RoleCode.TECHNICIAN ? '实验室技术员'
+                  : '临床工程师'
               };
               mockUsers[body.username] = { password: body.password, user: newUser };
               return sendJson(res, generateAuthResponse(newUser));
             }
 
             if (pathWithoutQuery === '/api/auth/logout' && method === 'POST') {
-              return sendJson(res, { success: true, message: '已成功退出登录' });
+              const authHeader = req.headers['authorization'] || '';
+              if (authHeader.startsWith('Bearer ')) {
+                const token = authHeader.replace('Bearer ', '').trim();
+                if (token && token !== 'null' && token !== 'undefined') {
+                  tokenBlacklist.add(token);
+                }
+              }
+              return sendJson(res, {
+                success: true,
+                message: '已成功退出登录',
+                code: 'LOGGED_OUT'
+              });
             }
 
             if (pathWithoutQuery === '/api/auth/me' && method === 'GET') {
               const auth = authUser(req);
-              if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+              if (!auth) {
+                return sendJson(res, {
+                  error: '未登录或登录已过期，请重新登录',
+                  message: '未登录或登录已过期',
+                  code: 'NOT_LOGGED_IN'
+                }, 401);
+              }
               return sendJson(res, auth.user);
             }
           }
 
-          // ============ TASKS: /api/tasks/* ============
           if (pathWithoutQuery.startsWith('/api/tasks')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
             if (pathWithoutQuery === '/api/tasks' && method === 'GET') {
-              return sendJson(res, generateTaskList(15));
+              const tasks = Object.values(taskStore);
+              return sendJson(res, {
+                data: tasks,
+                total: tasks.length,
+                page: 1,
+                pageSize: tasks.length,
+                success: true
+              });
             }
 
             if (pathWithoutQuery === '/api/tasks' && method === 'POST') {
@@ -352,21 +515,35 @@ export function mockApiPlugin(): Plugin {
             }
           }
 
-          // ============ WORKFLOW: /api/workflow/* ============
           if (pathWithoutQuery.startsWith('/api/workflow')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
             const transitionsMatch = pathWithoutQuery.match(/^\/api\/workflow\/transitions\/([^/]+)$/);
             if (transitionsMatch && method === 'GET') {
-              const taskId = transitionsMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.TARGET_EVALUATING, 100);
-              const validTransitions = getValidTransitions(task.status, auth.roleCode as RoleCode);
-              return sendJson(res, {
-                success: true,
-                currentStatus: task.status,
-                validTransitions
-              });
+              try {
+                const taskId = transitionsMatch[1];
+                const task = taskStore[taskId] || createMockTask(TaskStatus.TARGET_EVALUATING, 100);
+                const validTransitions = getValidTransitions(task.status, auth.roleCode as RoleCode);
+                return sendJson(res, {
+                  success: true,
+                  currentStatus: task.status,
+                  currentStatusText: task.statusText || '',
+                  validTransitions
+                });
+              } catch (err: any) {
+                return sendJson(res, {
+                  success: false,
+                  error: '获取可执行流转失败: ' + (err?.message || '未知错误'),
+                  validTransitions: []
+                }, 500);
+              }
             }
 
             const transitionMatch = pathWithoutQuery.match(/^\/api\/workflow\/transition\/([^/]+)$/);
@@ -377,7 +554,12 @@ export function mockApiPlugin(): Plugin {
               const valid = getValidTransitions(task.status, auth.roleCode as RoleCode);
               const targetTransition = valid.find((t: any) => t.targetStatus === body.targetStatus);
               if (!targetTransition) {
-                return sendJson(res, { success: false, error: '无权执行此状态转换或转换无效' }, 400);
+                return sendJson(res, {
+                  success: false,
+                  error: '无权执行此状态转换，或当前状态不支持该操作',
+                  message: '状态转换无效',
+                  code: 'INVALID_TRANSITION'
+                }, 403);
               }
               task.status = body.targetStatus as TaskStatus;
               task.timeline.push({
@@ -398,158 +580,180 @@ export function mockApiPlugin(): Plugin {
                 task.targetPlan = mockTargetPlan;
               }
               taskStore[taskId] = task;
-              return sendJson(res, { success: true, task, transition: targetTransition });
-            }
-
-            const autoAdvanceMatch = pathWithoutQuery.match(/^\/api\/workflow\/auto-advance\/([^/]+)$/);
-            if (autoAdvanceMatch && method === 'POST') {
-              const taskId = autoAdvanceMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.SOURCE_INVERTING, 65);
-              const advanceMap: Record<string, TaskStatus> = {
-                [TaskStatus.PENDING_VALIDATION]: TaskStatus.HEAD_MODEL_BUILDING,
-                [TaskStatus.HEAD_MODEL_BUILDING]: TaskStatus.FORWARD_COMPUTING,
-                [TaskStatus.FORWARD_COMPUTING]: TaskStatus.SOURCE_INVERTING,
-                [TaskStatus.SOURCE_INVERTING]: TaskStatus.TARGET_EVALUATING
-              };
-              const next = advanceMap[task.status];
-              if (next) {
-                task.status = next;
-                task.progress = Math.min(100, task.progress + 25);
-                if (next === TaskStatus.TARGET_EVALUATING) {
-                  task.progress = 100;
-                  task.targetPlan = mockTargetPlan;
-                }
-                taskStore[taskId] = task;
-              }
-              return sendJson(res, { success: true, task });
-            }
-
-            const historyMatch = pathWithoutQuery.match(/^\/api\/workflow\/history\/([^/]+)$/);
-            if (historyMatch && method === 'GET') {
-              const taskId = historyMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.TARGET_EVALUATING, 100);
-              return sendJson(res, { success: true, history: task.timeline, progress: task.progress });
-            }
-
-            const progressMatch = pathWithoutQuery.match(/^\/api\/workflow\/progress\/([^/]+)$/);
-            if (progressMatch && method === 'GET') {
-              const taskId = progressMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.TARGET_EVALUATING, 100);
-              return sendJson(res, { success: true, progress: task.progress });
+              return sendJson(res, {
+                success: true,
+                task: taskStore[taskId],
+                message: targetTransition.label
+              });
             }
           }
 
-          // ============ COMPUTE: /api/compute/* ============
           if (pathWithoutQuery.startsWith('/api/compute')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
-            const hmMatch = pathWithoutQuery.match(/^\/api\/compute\/head-model\/build\/([^/]+)$/);
-            if (hmMatch && method === 'POST') {
-              const taskId = hmMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.HEAD_MODEL_BUILDING, 25);
-              task.headModel = mockHeadModel;
-              task.status = TaskStatus.HEAD_MODEL_BUILDING;
-              task.progress = 25;
+            const stepMatch = pathWithoutQuery.match(/^\/api\/compute\/([^/]+)\/([^/]+)$/);
+            if (stepMatch && method === 'POST') {
+              const taskId = stepMatch[1];
+              const step = stepMatch[2];
+              const task = taskStore[taskId] || createMockTask(TaskStatus.PENDING_VALIDATION, 5);
+              const stepMap: Record<string, { status: TaskStatus; progress: number; data?: any }> = {
+                'head-model': { status: TaskStatus.HEAD_MODEL_BUILDING, progress: 25, data: mockHeadModel },
+                'forward': { status: TaskStatus.FORWARD_COMPUTING, progress: 50, data: mockForwardResult },
+                'source': { status: TaskStatus.SOURCE_INVERTING, progress: 75, data: mockSourceResult },
+                'target': { status: TaskStatus.TARGET_EVALUATING, progress: 100, data: mockTargetPlan },
+              };
+              const conf = stepMap[step];
+              if (!conf) {
+                return sendJson(res, {
+                  success: false,
+                  error: '未知计算步骤: ' + step,
+                  message: '未知计算步骤'
+                }, 400);
+              }
+              task.status = conf.status;
+              task.progress = conf.progress;
+              if (step === 'head-model') task.headModel = conf.data;
+              if (step === 'forward') task.forwardResult = conf.data;
+              if (step === 'source') task.sourceResult = conf.data;
+              if (step === 'target') {
+                task.sourceResult = mockSourceResult;
+                task.targetPlan = conf.data;
+              }
+              task.timeline.push({
+                id: 't_' + Date.now(),
+                fromStatus: task.status,
+                toStatus: conf.status,
+                toStatusText: '计算步骤完成',
+                reason: step,
+                operator: auth.user,
+                createdAt: new Date().toISOString()
+              });
               taskStore[taskId] = task;
-              return sendJson(res, mockHeadModel);
-            }
-            const hmGetMatch = pathWithoutQuery.match(/^\/api\/compute\/head-model\/([^/]+)$/);
-            if (hmGetMatch && method === 'GET') {
-              return sendJson(res, mockHeadModel);
-            }
-
-            const fwMatch = pathWithoutQuery.match(/^\/api\/compute\/forward\/solve\/([^/]+)$/);
-            if (fwMatch && method === 'POST') {
-              const taskId = fwMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.FORWARD_COMPUTING, 50);
-              task.forwardResult = mockForwardResult;
-              task.status = TaskStatus.FORWARD_COMPUTING;
-              task.progress = 50;
-              taskStore[taskId] = task;
-              return sendJson(res, mockForwardResult);
-            }
-            const fwGetMatch = pathWithoutQuery.match(/^\/api\/compute\/forward\/([^/]+)$/);
-            if (fwGetMatch && method === 'GET') {
-              return sendJson(res, mockForwardResult);
-            }
-
-            const srcMatch = pathWithoutQuery.match(/^\/api\/compute\/source\/solve\/([^/]+)$/);
-            if (srcMatch && method === 'POST') {
-              const taskId = srcMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.SOURCE_INVERTING, 75);
-              task.sourceResult = mockSourceResult;
-              task.status = TaskStatus.SOURCE_INVERTING;
-              task.progress = 75;
-              taskStore[taskId] = task;
-              return sendJson(res, mockSourceResult);
-            }
-            const srcGetMatch = pathWithoutQuery.match(/^\/api\/compute\/source\/([^/]+)$/);
-            if (srcGetMatch && method === 'GET') {
-              return sendJson(res, mockSourceResult);
-            }
-
-            const tgtMatch = pathWithoutQuery.match(/^\/api\/compute\/target\/optimize\/([^/]+)$/);
-            if (tgtMatch && method === 'POST') {
-              const taskId = tgtMatch[1];
-              const task = taskStore[taskId] || createMockTask(TaskStatus.TARGET_EVALUATING, 100);
-              task.targetPlan = mockTargetPlan;
-              task.status = TaskStatus.TARGET_EVALUATING;
-              task.progress = 100;
-              taskStore[taskId] = task;
-              return sendJson(res, mockTargetPlan);
-            }
-            const tgtGetMatch = pathWithoutQuery.match(/^\/api\/compute\/target\/([^/]+)$/);
-            if (tgtGetMatch && method === 'GET') {
-              return sendJson(res, mockTargetPlan);
-            }
-
-            if (pathWithoutQuery === '/api/compute/target/coils' && method === 'GET') {
-              return sendJson(res, [
-                { id: 'figure8', name: '8字线圈', description: '标准聚焦线圈', focality: 0.9 },
-                { id: 'circular', name: '圆形线圈', description: '大范围刺激', focality: 0.5 },
-                { id: 'hcoil', name: 'H线圈', description: '深部脑区刺激', focality: 0.6 }
-              ]);
-            }
-            if (pathWithoutQuery === '/api/compute/target/recommend' && method === 'POST') {
-              return sendJson(res, { success: true, recommendation: mockTargetPlan });
+              return sendJson(res, {
+                success: true,
+                task: taskStore[taskId],
+                data: conf.data,
+                message: `${step} 计算完成`
+              });
             }
           }
 
-          // ============ APPROVALS: /api/approvals/* ============
           if (pathWithoutQuery.startsWith('/api/approvals')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
-            if (pathWithoutQuery === '/api/approvals' && method === 'GET') {
-              const approvalsList: any[] = [];
+            const getApprovalList = (status: string, level: number | null = null) => {
+              const allApprovals: any[] = [];
               Object.values(taskStore).forEach((t) => {
-                t.approvals.forEach((a) => {
-                  approvalsList.push({ ...a, taskNo: t.taskNo, patientName: t.patient.name });
+                t.approvals.forEach((a: any) => {
+                  if (status && a.status !== status) return;
+                  if (level && a.approvalLevel !== level) return;
+                  allApprovals.push({
+                    ...a,
+                    taskId: t.id,
+                    taskNo: t.taskNo,
+                    patientName: t.patient?.name || '未知',
+                    taskStatus: t.status,
+                    taskStatusText: t.statusText
+                  });
                 });
               });
+              return allApprovals;
+            };
+
+            const getMyApprovalList = (status: string) => {
+              const allApprovals = getApprovalList(status, null);
+              if (auth.roleCode === RoleCode.ENGINEER) {
+                return allApprovals.filter((a) => a.approvalLevel === 1);
+              }
+              if (auth.roleCode === RoleCode.DIRECTOR) {
+                return allApprovals.filter((a) => a.approvalLevel === 2);
+              }
+              return allApprovals;
+            };
+
+            if (pathWithoutQuery === '/api/approvals' && method === 'GET') {
+              const status = query.status || 'pending';
+              const level = query.level ? parseInt(query.level) : null;
+              const list = getMyApprovalList(status);
+              if (level) {
+                const filtered = list.filter((a) => a.approvalLevel === level);
+                return sendJson(res, { success: true, data: filtered, total: filtered.length, page: 1, pageSize: 20, totalPages: 1 });
+              }
+              return sendJson(res, { success: true, data: list, total: list.length, page: 1, pageSize: 20, totalPages: 1 });
+            }
+
+            if (pathWithoutQuery === '/api/approvals/pending' && method === 'GET') {
+              const list = getMyApprovalList('pending');
+              return sendJson(res, { success: true, data: list, total: list.length, page: 1, pageSize: 20, totalPages: 1 });
+            }
+
+            const submitMatch = pathWithoutQuery.match(/^\/api\/approvals\/submit\/([^/]+)$/);
+            if (submitMatch && method === 'POST') {
+              const taskId = submitMatch[1];
+              const body = await readBody(req);
+              const task = taskStore[taskId] || createMockTask(TaskStatus.TARGET_EVALUATING, 100);
+              const allowedRoles = [RoleCode.ENGINEER, RoleCode.ADMIN, RoleCode.TECHNICIAN];
+              if (!allowedRoles.includes(auth.roleCode as RoleCode)) {
+                return sendJson(res, {
+                  success: false,
+                  error: '您没有提交审批的权限，请联系临床工程师或管理员',
+                  message: '无提交审批权限',
+                  code: 'PERMISSION_DENIED'
+                }, 403);
+              }
+              const level = body.level || 1;
+              const existingApproval = task.approvals.find((a: any) => a.approvalLevel === level);
+              if (!existingApproval) {
+                return sendJson(res, {
+                  success: false,
+                  error: '该任务未配置对应级别的审批流程',
+                  message: '审批流程不存在'
+                }, 404);
+              }
+              if (existingApproval.status !== ApprovalStatus.PENDING) {
+                return sendJson(res, {
+                  success: false,
+                  error: '该审批已被处理，无法重复提交',
+                  message: '审批已处理'
+                }, 400);
+              }
+              task.status = level === 1 ? TaskStatus.PENDING_ENGINEER_APPROVAL : TaskStatus.PENDING_DIRECTOR_APPROVAL;
+              task.timeline.push({
+                id: 't_' + Date.now(),
+                fromStatus: task.status,
+                toStatus: task.status,
+                toStatusText: level === 1 ? '提交工程师审批' : '提交主任审批',
+                reason: body.comment || '提交审批',
+                operator: auth.user,
+                createdAt: new Date().toISOString()
+              });
+              taskStore[taskId] = task;
               return sendJson(res, {
-                data: approvalsList,
-                total: approvalsList.length,
-                page: 1,
-                pageSize: 20,
-                totalPages: 1
+                success: true,
+                approval: existingApproval,
+                task: taskStore[taskId],
+                message: '已提交审批'
               });
             }
 
-            if (pathWithoutQuery === '/api/approvals/submit' && method === 'POST') {
-              const body = await readBody(req);
-              const task = taskStore[body.taskId] || createMockTask(TaskStatus.PENDING_ENGINEER_APPROVAL, 100);
-              task.status = body.type === 'engineer' ? TaskStatus.PENDING_ENGINEER_APPROVAL : TaskStatus.PENDING_DIRECTOR_APPROVAL;
-              taskStore[task.id] = task;
-              return sendJson(res, { success: true, message: '已提交审批' });
-            }
-
-            const procMatch = pathWithoutQuery.match(/^\/api\/approvals\/([^/]+)\/process$/);
+            const procMatch = pathWithoutQuery.match(/^\/api\/approvals\/process\/([^/]+)$/);
             if (procMatch && method === 'POST') {
               const approvalId = procMatch[1];
               const body = await readBody(req);
-              // 兼容两种字段名: decision/approved, comments/comment
               const approved = body.decision === 'approved' || body.decision === true || body.approved === true;
               const comment = body.comments || body.comment || '';
 
@@ -564,15 +768,41 @@ export function mockApiPlugin(): Plugin {
               });
 
               if (!foundApproval) {
-                return sendJson(res, { success: false, error: '审批记录不存在' }, 404);
+                return sendJson(res, {
+                  success: false,
+                  error: '审批记录不存在',
+                  message: '审批记录不存在',
+                  code: 'NOT_FOUND'
+                }, 404);
               }
 
-              // 权限检查：工程师审批(1级)必须engineer/admin；主任审批(2级)必须director/admin
-              if (foundApproval.approvalLevel === 1 && auth.roleCode !== RoleCode.ENGINEER && auth.roleCode !== RoleCode.ADMIN) {
-                return sendJson(res, { success: false, error: '您没有工程师一级审批权限' }, 403);
+              if (foundApproval.status !== ApprovalStatus.PENDING) {
+                return sendJson(res, {
+                  success: false,
+                  error: '该审批已被处理，无法重复操作',
+                  message: '审批已处理'
+                }, 400);
               }
-              if (foundApproval.approvalLevel === 2 && auth.roleCode !== RoleCode.DIRECTOR && auth.roleCode !== RoleCode.ADMIN) {
-                return sendJson(res, { success: false, error: '您没有主任二级审批权限' }, 403);
+
+              if (foundApproval.approvalLevel === 1
+                && auth.roleCode !== RoleCode.ENGINEER
+                && auth.roleCode !== RoleCode.ADMIN) {
+                return sendJson(res, {
+                  success: false,
+                  error: '只有临床工程师或系统管理员可以处理一级审批',
+                  message: '您没有工程师一级审批权限',
+                  code: 'PERMISSION_DENIED'
+                }, 403);
+              }
+              if (foundApproval.approvalLevel === 2
+                && auth.roleCode !== RoleCode.DIRECTOR
+                && auth.roleCode !== RoleCode.ADMIN) {
+                return sendJson(res, {
+                  success: false,
+                  error: '只有神经内科主任或系统管理员可以处理二级审批',
+                  message: '您没有主任二级审批权限',
+                  code: 'PERMISSION_DENIED'
+                }, 403);
               }
 
               foundApproval.status = approved ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED;
@@ -581,7 +811,6 @@ export function mockApiPlugin(): Plugin {
               foundApproval.approver = auth.user;
               foundApproval.approvedAt = new Date().toISOString();
 
-              // 状态推进
               if (foundApproval.approvalLevel === 1) {
                 if (approved) {
                   foundTask.status = TaskStatus.PENDING_DIRECTOR_APPROVAL;
@@ -595,9 +824,24 @@ export function mockApiPlugin(): Plugin {
                   foundTask.status = TaskStatus.DIRECTOR_REJECTED;
                 }
               }
+              foundTask.statusText = getStatusText(foundTask.status);
+              foundTask.timeline.push({
+                id: 't_' + Date.now(),
+                fromStatus: foundTask.status,
+                toStatus: foundTask.status,
+                toStatusText: approved ? '审批通过' : '审批驳回',
+                reason: comment || (approved ? '同意' : '驳回'),
+                operator: auth.user,
+                createdAt: new Date().toISOString()
+              });
               if (foundTask) taskStore[foundTask.id] = foundTask;
 
-              return sendJson(res, { success: true, approval: foundApproval, task: foundTask });
+              return sendJson(res, {
+                success: true,
+                approval: foundApproval,
+                task: foundTask,
+                message: approved ? '审批通过' : '审批已驳回'
+              });
             }
 
             const permMatch = pathWithoutQuery.match(/^\/api\/approvals\/permissions\/([^/]+)$/);
@@ -633,16 +877,6 @@ export function mockApiPlugin(): Plugin {
               return sendJson(res, { success: true, hasPermission: allowed, allowed, roleCode: auth.roleCode });
             }
 
-            const navPushMatch = pathWithoutQuery.match(/^\/api\/approvals\/navigation\/push\/([^/]+)$/);
-            if (navPushMatch && method === 'POST') {
-              const taskId = navPushMatch[1];
-              return sendJson(res, { success: true, navigationTaskId: 'NAV-' + Date.now(), pushedAt: new Date().toISOString() });
-            }
-            const navStatusMatch = pathWithoutQuery.match(/^\/api\/approvals\/navigation\/status\/([^/]+)$/);
-            if (navStatusMatch && method === 'GET') {
-              return sendJson(res, { pushed: true, pushedAt: new Date().toISOString(), navigationTaskId: 'NAV-20240614001' });
-            }
-
             const historyMatch2 = pathWithoutQuery.match(/^\/api\/approvals\/history\/([^/]+)$/);
             if (historyMatch2 && method === 'GET') {
               const taskId = historyMatch2[1];
@@ -651,10 +885,15 @@ export function mockApiPlugin(): Plugin {
             }
           }
 
-          // ============ ALERTS: /api/alerts/* ============
           if (pathWithoutQuery.startsWith('/api/alerts')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
             if (pathWithoutQuery === '/api/alerts' && method === 'GET') {
               const allAlerts: any[] = [];
@@ -669,35 +908,37 @@ export function mockApiPlugin(): Plugin {
                 id: alertMatch[1],
                 taskId: 'task_1',
                 taskNo: 'TSK-2024015',
-                patientName: '张某某',
+                patientName: 'Patient',
                 alertType: 'residual_exceeded',
-                alertTypeText: '拟合残差超限',
+                alertTypeText: 'Residual exceeded',
                 severity: 'warning',
-                severityText: '警告',
+                severityText: 'Warning',
                 threshold: 10,
                 actualValue: 12.3,
                 unit: '%',
-                description: '第23时间窗偶极子拟合残差12.3%超过阈值10%',
-                suggestion: '建议调整正则化参数至0.08或切换至Beamforming算法',
+                description: 'Time window 23 residual error 12.3% exceeds threshold 10%',
+                suggestion: 'Suggest adjusting regularization parameter to 0.08 or switching to Beamforming algorithm',
                 isResolved: false
               });
             }
             const reviewMatch = pathWithoutQuery.match(/^\/api\/alerts\/([^/]+)\/process$/);
             if (reviewMatch && method === 'POST') {
-              return sendJson(res, { success: true, message: '预警已处理' });
-            }
-            if (pathWithoutQuery === '/api/alerts/review' && method === 'POST') {
-              return sendJson(res, { success: true, message: '专家复核完成' });
+              return sendJson(res, { success: true, message: 'Alert processed' });
             }
             if (pathWithoutQuery === '/api/alerts/notifications/unread-count' && method === 'GET') {
               return sendJson(res, { count: 3 });
             }
           }
 
-          // ============ PATIENTS: /api/patients/* ============
           if (pathWithoutQuery.startsWith('/api/patients')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
             if (pathWithoutQuery === '/api/patients' && method === 'GET') {
               return sendJson(res, {
@@ -720,18 +961,32 @@ export function mockApiPlugin(): Plugin {
             }
           }
 
-          // ============ REPORTS: /api/reports/* ============
           if (pathWithoutQuery.startsWith('/api/reports')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
             const genMatch = pathWithoutQuery.match(/^\/api\/reports\/generate\/([^/]+)$/);
             if (genMatch && method === 'POST') {
               const taskId = genMatch[1];
               const reportId = 'rep_' + Date.now();
+              const task = taskStore[taskId] || createMockTask(TaskStatus.COMPLETED, 100);
+              if (!task.sourceResult || !task.targetPlan) {
+                return sendJson(res, {
+                  success: false,
+                  error: '源定位或靶点评估尚未完成，无法生成综合报告',
+                  message: '计算步骤未完成'
+                }, 400);
+              }
               return sendJson(res, {
                 success: true,
                 reportId,
+                downloadUrl: `/api/reports/${reportId}/download`,
                 message: '报告生成成功'
               });
             }
@@ -768,10 +1023,15 @@ export function mockApiPlugin(): Plugin {
             }
           }
 
-          // ============ ANALYTICS: /api/analytics/* ============
           if (pathWithoutQuery.startsWith('/api/analytics')) {
             const auth = authUser(req);
-            if (!auth) return sendJson(res, { error: '未登录或登录已过期' }, 401);
+            if (!auth) {
+              return sendJson(res, {
+                error: '未登录或登录已过期，请重新登录',
+                message: '未登录或登录已过期',
+                code: 'NOT_LOGGED_IN'
+              }, 401);
+            }
 
             if (pathWithoutQuery === '/api/analytics/dashboard' && method === 'GET') {
               return sendJson(res, mockAnalytics);
@@ -787,20 +1047,25 @@ export function mockApiPlugin(): Plugin {
             }
           }
 
-          // ============ HEALTH ============
           if (pathWithoutQuery === '/api/health') {
             return sendJson(res, { success: true, message: 'ok', mockMode: true });
           }
 
-          // Fallback 404
-          return sendJson(res, { success: false, error: `API not found: ${method} ${pathWithoutQuery}` }, 404);
-
-        } catch (err: any) {
-          console.error('[Mock API Error]', err);
           return sendJson(res, {
             success: false,
-            error: err?.message || '服务器内部错误',
-            stack: err?.stack
+            error: `API not found: ${method} ${pathWithoutQuery}`,
+            message: '接口不存在'
+          }, 404);
+
+        } catch (err: any) {
+          console.error('[Mock API Error]', err?.message || err);
+          if (err?.stack) {
+            console.error(err.stack);
+          }
+          return sendJson(res, {
+            success: false,
+            error: '服务器内部错误: ' + (err?.message || '未知错误'),
+            message: '服务器内部错误'
           }, 500);
         }
       });
