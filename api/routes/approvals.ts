@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { getApprovalService } from '../modules/approval';
 import { ApprovalQueryParams } from '../modules/approval/types';
-import { RoleCode } from '../../../shared/types/enums';
+import { RoleCode } from 'shared/types/enums';
 
 const router = Router();
 const prisma = new PrismaClient();

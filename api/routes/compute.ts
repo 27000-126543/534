@@ -8,7 +8,7 @@ import { HeadModelBuildParams } from '../modules/head-model/types';
 import { ForwardProblemParams, LeadFieldConfig } from '../modules/forward-problem/types';
 import { SourceImagingParams } from '../modules/source-imaging/types';
 import { TargetOptimizationParams } from '../modules/target-optimization/types';
-import { AlgorithmType, StimulationPattern } from '../../../shared/types/enums';
+import { AlgorithmType, StimulationPattern } from 'shared/types/enums';
 
 const router = Router();
 const prisma = new PrismaClient();

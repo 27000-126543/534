@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { Torus, Cylinder, ArrowHelper } from '@react-three/drei';
+import { Torus, Cylinder } from '@react-three/drei';
 
 interface TMSCoilProps {
   position: [number, number, number];
@@ -72,141 +72,144 @@ export function TMSCoil({
     return '#26A69A';
   }, [currentIntensity]);
 
-  const electricFieldOpacity = animate ? 0.3 + 0.2 * Math.sin(Date.now() / 500) : 0.3;
+  let electricFieldOpacity = animate ? 0.3 + 0.2 * Math.sin(Date.now() / 500) : 0.3;
 
-  useFrame((state, delta) => {
+  useFrame(() => {
     if (animate) {
-      electricFieldOpacity;
+      electricFieldOpacity = 0.3 + 0.2 * Math.sin(Date.now() / 500);
     }
   });
 
-  const renderCoilBody = () => {
-    switch (coilType) {
-      case 'figure8':
-        return (
-          <group>
-            <group position={[-0.5, 0, 0]} rotation={[0, 0, Math.PI / 6]}>
-              <Torus args={[0.6, 0.08, 16, 32]}>
-                <meshStandardMaterial
-                  color="#455A64"
-                  metalness={0.8}
-                  roughness={0.2}
-                />
-              </Torus>
-            </group>
-            <group position={[0.5, 0, 0]} rotation={[0, 0, -Math.PI / 6]}>
-              <Torus args={[0.6, 0.08, 16, 32]}>
-                <meshStandardMaterial
-                  color="#455A64"
-                  metalness={0.8}
-                  roughness={0.2}
-                />
-              </Torus>
-            </group>
-            <Cylinder
-              position={[0, 0, 0]}
-              args={[0.15, 0.15, 0.3, 16]}
-              rotation={[Math.PI / 2, 0, 0]}
-            >
-              <meshStandardMaterial
-                color="#37474F"
-                metalness={0.7}
-                roughness={0.3}
-              />
-            </Cylinder>
-          </group>
-        );
-      case 'circular':
-        return (
-          <group>
-            <Torus args={[0.8, 0.1, 16, 48]}>
+  const handleEnd: [number, number, number] = useMemo(() => {
+    const handleVec = new THREE.Vector3(...normalizedHandle).applyQuaternion(quaternion);
+    return [
+      handleVec.x * 1.5,
+      handleVec.y * 1.5,
+      handleVec.z * 1.5
+    ];
+  }, [normalizedHandle, quaternion]);
+
+  const arrowArgs: [THREE.Vector3, THREE.Vector3, number, string, number, number] = useMemo(
+    () => [
+      new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(0, 0, 0),
+      1.5,
+      intensityColor,
+      0.3,
+      0.15
+    ],
+    [intensityColor]
+  );
+
+  return (
+    <group position={scaledPosition} quaternion={quaternion}>
+      {coilType === 'figure8' && (
+        <group>
+          <group position={[-0.5, 0, 0]} rotation={[0, 0, Math.PI / 6]}>
+            <Torus args={[0.6, 0.08, 16, 32]}>
               <meshStandardMaterial
                 color="#455A64"
                 metalness={0.8}
                 roughness={0.2}
               />
             </Torus>
-            <Cylinder
-              args={[0.1, 0.1, 0.4, 16]}
-              rotation={[Math.PI / 2, 0, 0]}
-            >
-              <meshStandardMaterial
-                color="#37474F"
-                metalness={0.7}
-                roughness={0.3}
-              />
-            </Cylinder>
           </group>
-        );
-      case 'h-coil':
-        return (
-          <group>
-            <Box position={[-0.8, 0, 0]} args={[0.4, 1.2, 0.3]}>
+          <group position={[0.5, 0, 0]} rotation={[0, 0, -Math.PI / 6]}>
+            <Torus args={[0.6, 0.08, 16, 32]}>
               <meshStandardMaterial
                 color="#455A64"
                 metalness={0.8}
                 roughness={0.2}
               />
-            </Box>
-            <Box position={[0.8, 0, 0]} args={[0.4, 1.2, 0.3]}>
-              <meshStandardMaterial
-                color="#455A64"
-                metalness={0.8}
-                roughness={0.2}
-              />
-            </Box>
-            <Box position={[0, 0.4, 0]} args={[2, 0.3, 0.3]}>
-              <meshStandardMaterial
-                color="#455A64"
-                metalness={0.8}
-                roughness={0.2}
-              />
-            </Box>
-            <Cylinder
-              position={[0, 0, 0]}
-              args={[0.12, 0.12, 0.4, 16]}
-              rotation={[Math.PI / 2, 0, 0]}
-            >
-              <meshStandardMaterial
-                color="#37474F"
-                metalness={0.7}
-                roughness={0.3}
-              />
-            </Cylinder>
+            </Torus>
           </group>
-        );
-    }
-  };
+          <Cylinder
+            position={[0, 0, 0]}
+            args={[0.15, 0.15, 0.3, 16]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <meshStandardMaterial
+              color="#37474F"
+              metalness={0.7}
+              roughness={0.3}
+            />
+          </Cylinder>
+        </group>
+      )}
 
-  const handleEnd: [number, number, number] = useMemo(() => {
-    const handleVec = new THREE.Vector3(...normalizedHandle).applyQuaternion(quaternion);
-    return [
-      scaledPosition[0] + handleVec.x * 1.5,
-      scaledPosition[1] + handleVec.y * 1.5,
-      scaledPosition[2] + handleVec.z * 1.5
-    ];
-  }, [scaledPosition, normalizedHandle, quaternion]);
+      {coilType === 'circular' && (
+        <group>
+          <Torus args={[0.8, 0.1, 16, 48]}>
+            <meshStandardMaterial
+              color="#455A64"
+              metalness={0.8}
+              roughness={0.2}
+            />
+          </Torus>
+          <Cylinder
+            args={[0.1, 0.1, 0.4, 16]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <meshStandardMaterial
+              color="#37474F"
+              metalness={0.7}
+              roughness={0.3}
+            />
+          </Cylinder>
+        </group>
+      )}
 
-  return (
-    <group position={scaledPosition} quaternion={quaternion}>
-      {renderCoilBody()}
+      {coilType === 'h-coil' && (
+        <group>
+          <mesh position={[-0.8, 0, 0]}>
+            <boxGeometry args={[0.4, 1.2, 0.3]} />
+            <meshStandardMaterial
+              color="#455A64"
+              metalness={0.8}
+              roughness={0.2}
+            />
+          </mesh>
+          <mesh position={[0.8, 0, 0]}>
+            <boxGeometry args={[0.4, 1.2, 0.3]} />
+            <meshStandardMaterial
+              color="#455A64"
+              metalness={0.8}
+              roughness={0.2}
+            />
+          </mesh>
+          <mesh position={[0, 0.4, 0]}>
+            <boxGeometry args={[2, 0.3, 0.3]} />
+            <meshStandardMaterial
+              color="#455A64"
+              metalness={0.8}
+              roughness={0.2}
+            />
+          </mesh>
+          <Cylinder
+            position={[0, 0, 0]}
+            args={[0.12, 0.12, 0.4, 16]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <meshStandardMaterial
+              color="#37474F"
+              metalness={0.7}
+              roughness={0.3}
+            />
+          </Cylinder>
+        </group>
+      )}
 
       <group position={[0, 1, 0]}>
         <Cylinder args={[0.06, 0.06, 1.5, 12]} position={handleEnd}>
           <meshStandardMaterial color="#263238" metalness={0.6} roughness={0.4} />
         </Cylinder>
-        <sphereGeometry args={[0.1, 16, 16]} position={handleEnd} />
-        <meshStandardMaterial color="#37474F" metalness={0.7} roughness={0.3} />
+        <mesh position={handleEnd}>
+          <sphereGeometry args={[0.1, 16, 16]} />
+          <meshStandardMaterial color="#37474F" metalness={0.7} roughness={0.3} />
+        </mesh>
       </group>
 
-      <ArrowHelper
-        origin={new THREE.Vector3(0, 0, 0)}
-        dir={new THREE.Vector3(0, -1, 0)}
-        length={1.5}
-        color={intensityColor}
-        headLength={0.3}
-        headWidth={0.15}
-      />
+      <arrowHelper args={arrowArgs} />
 
       {showElectricField && (
         <group position={[0, -1, 0]}>
@@ -240,13 +243,5 @@ export function TMSCoil({
         </mesh>
       </group>
     </group>
-  );
-}
-
-function Box({ position, args }: { position: [number, number, number]; args: [number, number, number] }) {
-  return (
-    <mesh position={position}>
-      <boxGeometry args={args} />
-    </mesh>
   );
 }

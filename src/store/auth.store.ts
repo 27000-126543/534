@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { authAPI } from '@/services/api';
-import { RoleCode } from '../../../shared/types/enums';
-import type { UserSummary, AuthResponse } from '../../../shared/types/api';
+import { RoleCode } from 'shared/types/enums';
+import type { UserSummary, AuthResponse } from 'shared/types/api';
 
 interface AuthState {
   user: UserSummary | null;

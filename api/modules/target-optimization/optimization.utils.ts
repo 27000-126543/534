@@ -11,7 +11,7 @@ import {
   DEFAULT_COIL_MODELS,
   DEFAULT_OPTIMIZATION_CONFIG
 } from './types';
-import { StimulationPattern } from '../../../../shared/types/enums';
+import { StimulationPattern } from 'shared/types/enums';
 import {
   calculateEuclideanDistance,
   normalizeVector,

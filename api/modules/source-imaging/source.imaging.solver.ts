@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { AlgorithmType, AlertType } from '../../../../shared/types/enums';
+import { AlgorithmType, AlertType } from 'shared/types/enums';
 import {
   SourceImagingParams,
   SourceImagingResult,

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { getAlertService } from '../modules/alert-system';
-import { AlertType, AlertSeverity } from '../../../shared/types/enums';
+import { AlertType, AlertSeverity } from 'shared/types/enums';
 import { ReviewDecision, AlertQueryParams } from '../modules/alert-system/types';
 
 const router = Router();

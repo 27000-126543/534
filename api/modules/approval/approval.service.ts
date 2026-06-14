@@ -3,7 +3,7 @@ import {
   RoleCode,
   ApprovalStatus,
   TaskStatus
-} from '../../../../shared/types/enums';
+} from 'shared/types/enums';
 import {
   ApprovalFlowConfig,
   ApprovalDecision,

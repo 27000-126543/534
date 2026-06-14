@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { ArrowHelper, Cone, Sphere } from '@react-three/drei';
+import { Cone, Sphere } from '@react-three/drei';
 
 interface DipoleVisualizationProps {
   position: [number, number, number];
@@ -46,20 +46,25 @@ export function DipoleVisualization({
     return '#EF5350';
   }, [goodnessOfFit, color]);
 
+  const arrowArgs: [THREE.Vector3, THREE.Vector3, number, number | string, number, number] = useMemo(
+    () => [
+      new THREE.Vector3(...normalizedMoment),
+      new THREE.Vector3(...scaledPosition),
+      2 * scale,
+      arrowColor,
+      0.4 * scale,
+      0.2 * scale
+    ],
+    [normalizedMoment, scaledPosition, scale, arrowColor]
+  );
+
   return (
     <group>
       <Sphere position={scaledPosition} args={[0.15 * scale, 16, 16]}>
         <meshStandardMaterial color={arrowColor} metalness={0.5} roughness={0.2} />
       </Sphere>
 
-      <ArrowHelper
-        origin={new THREE.Vector3(...scaledPosition)}
-        dir={new THREE.Vector3(...normalizedMoment)}
-        length={2 * scale}
-        color={arrowColor}
-        headLength={0.4 * scale}
-        headWidth={0.2 * scale}
-      />
+      <arrowHelper args={arrowArgs} />
 
       <Cone
         position={endPosition}

@@ -20,8 +20,8 @@ import {
   XCircle
 } from 'lucide-react';
 import { usePatientStore, useUIStore, useAuthStore, useTaskStore } from '@/store';
-import { RoleCode } from '../../../shared/types/enums';
-import type { PatientSummary } from '../../../shared/types/api';
+import { RoleCode } from 'shared/types/enums';
+import type { PatientSummary } from 'shared/types/api';
 
 const mockPatients: PatientSummary[] = [
   { id: 'p1', medicalRecordNo: 'MR001', name: '张某某', gender: '男', age: 45, diagnosis: '重度抑郁症', isSuspended: false },
@@ -293,7 +293,7 @@ export default function PatientsList() {
                             <div className="text-xs text-gray-500 mt-0.5">
                               最大偏差 {dev.maxDeviation.toFixed(1)}mm
                               {isHighRisk && (
-                                <span className="ml-1 text-red-600">(>8mm阈值)</span>
+                                <span className="ml-1 text-red-600">({'>'}8mm阈值)</span>
                               )}
                             </div>
                           </div>

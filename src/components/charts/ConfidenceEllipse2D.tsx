@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { ConfidenceEllipsoid, DipoleParameters } from '../../../../shared/types/api';
+import type { ConfidenceEllipsoid, DipoleParameters } from 'shared/types/api';
 
 interface ConfidenceEllipse2DProps {
   ellipsoid?: ConfidenceEllipsoid;

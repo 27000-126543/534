@@ -23,7 +23,7 @@ import {
   ApprovalStatus,
   ApprovalStatusText,
   RoleCode
-} from '../../../shared/types/enums';
+} from 'shared/types/enums';
 
 type ApprovalLevel = 'all' | 1 | 2;
 

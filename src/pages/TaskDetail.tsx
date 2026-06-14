@@ -23,7 +23,10 @@ import {
   Gauge,
   FileCheck,
   Send,
-  Bot
+  Bot,
+  Loader2,
+  AlertCircle,
+  XCircle
 } from 'lucide-react';
 import {
   HeadModelScene,
@@ -36,6 +39,7 @@ import {
   ConfidenceEllipse2D
 } from '@/components/charts';
 import { useTaskStore, useApprovalStore, useAlertStore, useUIStore, useAuthStore } from '@/store';
+import { workflowAPI, reportsAPI } from '@/services/api';
 import {
   TaskStatus,
   TaskStatusColor,
@@ -48,8 +52,8 @@ import {
   BrainRegionText,
   StimulationPatternText,
   RoleCode
-} from '../../../shared/types/enums';
-import type { TaskDetailResponse, MonitoringMetric } from '../../../shared/types/api';
+} from 'shared/types/enums';
+import type { TaskDetailResponse, MonitoringMetric } from 'shared/types/api';
 
 const workflowSteps = [
   { key: TaskStatus.PENDING_VALIDATION, label: '待校验', icon: CheckCircle2 },
@@ -99,92 +103,12 @@ const mockTask: TaskDetailResponse = {
   currentPhase: 'source_inverting',
   progress: 65,
   notes: '患者MDD-III型，药物反应不佳，建议高聚焦度方案',
-  timeline: [
-    {
-      id: 't1',
-      fromStatus: null,
-      toStatus: TaskStatus.PENDING_VALIDATION,
-      toStatusText: '待校验',
-      reason: null,
-      operator: null,
-      createdAt: '2024-06-14T08:30:00Z'
-    },
-    {
-      id: 't2',
-      fromStatus: TaskStatus.PENDING_VALIDATION,
-      toStatus: TaskStatus.HEAD_MODEL_BUILDING,
-      toStatusText: '头模型构建中',
-      reason: '数据校验通过',
-      operator: null,
-      createdAt: '2024-06-14T08:35:00Z'
-    },
-    {
-      id: 't3',
-      fromStatus: TaskStatus.HEAD_MODEL_BUILDING,
-      toStatus: TaskStatus.FORWARD_COMPUTING,
-      toStatusText: '正问题计算中',
-      reason: '三层头模型构建完成，质量评分0.94',
-      operator: null,
-      createdAt: '2024-06-14T08:50:00Z'
-    },
-    {
-      id: 't4',
-      fromStatus: TaskStatus.FORWARD_COMPUTING,
-      toStatus: TaskStatus.SOURCE_INVERTING,
-      toStatusText: '源反演计算中',
-      reason: 'BEM正问题求解完成',
-      operator: null,
-      createdAt: '2024-06-14T09:05:00Z'
-    }
-  ],
-  approvals: [
-    {
-      id: 'a1',
-      taskId: '1',
-      approvalLevel: 1,
-      approvalLevelText: '临床工程师审批',
-      approver: null,
-      status: 'pending' as any,
-      statusText: '待审批',
-      comment: null,
-      approvedAt: null,
-      createdAt: '2024-06-14T08:30:00Z'
-    },
-    {
-      id: 'a2',
-      taskId: '1',
-      approvalLevel: 2,
-      approvalLevelText: '神经内科主任审批',
-      approver: null,
-      status: 'pending' as any,
-      statusText: '待审批',
-      comment: null,
-      approvedAt: null,
-      createdAt: '2024-06-14T08:30:00Z'
-    }
-  ],
-  alerts: [
-    {
-      id: 'al1',
-      taskId: '1',
-      taskNo: 'TSK-2024015',
-      patientName: '张某某',
-      alertType: 'residual_exceeded' as any,
-      alertTypeText: '拟合残差超限',
-      severity: 'warning' as any,
-      severityText: '警告',
-      threshold: 10,
-      actualValue: 12.3,
-      unit: '%',
-      description: '第23时间窗偶极子拟合残差12.3%超过阈值10%',
-      suggestion: '建议调整正则化参数至0.08或切换至Beamforming算法',
-      isResolved: false,
-      createdAt: '2024-06-14T09:12:00Z'
-    }
-  ],
+  timeline: [],
+  approvals: [],
+  alerts: [],
   pushToNavigation: false,
-  createdAt: '2024-06-14T08:30:00Z',
-  updatedAt: '2024-06-14T09:15:00Z'
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
 };
 
 const mockMetrics: MonitoringMetric[] = Array.from({ length: 60 }, (_, i) => ({
@@ -203,6 +127,12 @@ const mockMetrics: MonitoringMetric[] = Array.from({ length: 60 }, (_, i) => ({
   createdAt: new Date(Date.now() + i * 1000).toISOString()
 }));
 
+interface ValidTransition {
+  targetStatus: TaskStatus;
+  label: string;
+  allowedRoles: RoleCode[];
+}
+
 export default function TaskDetail() {
   const { taskId } = useParams();
   const navigate = useNavigate();
@@ -211,13 +141,24 @@ export default function TaskDetail() {
   const isDetailLoading = useTaskStore((s) => s.isDetailLoading);
   const progress = useTaskStore((s) => s.progress);
   const progressMessage = useTaskStore((s) => s.progressMessage);
-  const submitApproval = useApprovalStore((s) => s.submitApproval);
+  const taskError = useTaskStore((s) => s.error);
+  const buildHeadModel = useTaskStore((s) => s.buildHeadModel);
+  const solveForward = useTaskStore((s) => s.solveForward);
+  const solveSource = useTaskStore((s) => s.solveSource);
+  const optimizeTarget = useTaskStore((s) => s.optimizeTarget);
+  const transitionStatus = useTaskStore((s) => s.transitionStatus);
   const processApproval = useApprovalStore((s) => s.processApproval);
-  const openModal = useUIStore((s) => s.openModal);
+  const approvalError = useApprovalStore((s) => s.error);
+  const approvalLoading = useApprovalStore((s) => s.isLoading);
+  const showNotification = useUIStore((s) => s.showNotification);
   const hasRole = useAuthStore((s) => s.hasRole);
 
   const [activeTab, setActiveTab] = useState<'visualization' | 'timeseries' | 'spectrum' | 'monitoring' | 'confidence'>('visualization');
   const [sourceTimeWindow, setSourceTimeWindow] = useState(30);
+  const [validTransitions, setValidTransitions] = useState<ValidTransition[]>([]);
+  const [loadingTransitions, setLoadingTransitions] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [downloadingReport, setDownloadingReport] = useState(false);
 
   const task = currentTask || mockTask;
   const metrics = mockMetrics;
@@ -227,10 +168,104 @@ export default function TaskDetail() {
   const isExpert = hasRole([RoleCode.EXPERT, RoleCode.CHIEF_SCIENTIST, RoleCode.ADMIN]);
 
   useEffect(() => {
-    if (taskId) fetchTaskDetail(taskId);
+    if (taskId) {
+      fetchTaskDetail(taskId);
+    }
   }, [taskId, fetchTaskDetail]);
 
+  useEffect(() => {
+    if (taskId) {
+      setLoadingTransitions(true);
+      workflowAPI.getValidTransitions(taskId)
+        .then((res) => {
+          setValidTransitions(res.data?.validTransitions || []);
+        })
+        .catch((err) => {
+          console.error('获取状态流转失败:', err);
+          setValidTransitions([]);
+        })
+        .finally(() => setLoadingTransitions(false));
+    }
+  }, [taskId, task.status]);
+
   const currentStepIndex = workflowSteps.findIndex((s) => s.key === task.status);
+
+  const refreshTask = async () => {
+    if (taskId) await fetchTaskDetail(taskId);
+    showNotification('任务状态已刷新', 'info');
+  };
+
+  const runComputationStep = async (step: 'head' | 'forward' | 'source' | 'target') => {
+    if (!taskId) return;
+    try {
+      showNotification(`正在执行${step === 'head' ? '头模型构建' : step === 'forward' ? '正问题计算' : step === 'source' ? '源反演' : '靶点评估'}...`, 'info');
+      if (step === 'head') await buildHeadModel(taskId);
+      if (step === 'forward') await solveForward(taskId);
+      if (step === 'source') await solveSource(taskId);
+      if (step === 'target') await optimizeTarget(taskId);
+      showNotification('计算步骤执行成功', 'success');
+      await fetchTaskDetail(taskId);
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || '计算执行失败';
+      showNotification(msg, 'error');
+    }
+  };
+
+  const handleTransition = async (transition: ValidTransition) => {
+    if (!taskId) return;
+    try {
+      showNotification(`正在执行：${transition.label}`, 'info');
+      await transitionStatus(taskId, transition.targetStatus);
+      showNotification('状态流转成功', 'success');
+      await fetchTaskDetail(taskId);
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || '状态流转失败';
+      showNotification(msg, 'error');
+    }
+  };
+
+  const handleApproval = async (approvalId: string, approvalLevel: 1 | 2, approved: boolean) => {
+    if (!taskId) return;
+    try {
+      const comment = approved ? `${approvalLevel === 1 ? '工程师' : '主任'}审批通过` : '需要修改';
+      await processApproval(approvalId, approved, comment);
+      showNotification(`审批${approved ? '通过' : '驳回'}成功`, 'success');
+      await fetchTaskDetail(taskId);
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || '审批处理失败';
+      showNotification(msg, 'error');
+    }
+  };
+
+  const handleGenerateAndDownloadReport = async () => {
+    if (!taskId) return;
+    try {
+      setGeneratingReport(true);
+      showNotification('正在生成综合报告...', 'info');
+      const genRes = await reportsAPI.generateReport(taskId);
+      const reportId = genRes.data?.reportId || 'rep_default';
+
+      setDownloadingReport(true);
+      const dlRes = await reportsAPI.downloadReport(reportId);
+      const blob = new Blob([dlRes.data as any], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `NeuroGuide_Report_${task.taskNo}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showNotification('综合报告已下载成功', 'success');
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || '报告生成失败';
+      showNotification(msg, 'error');
+    } finally {
+      setGeneratingReport(false);
+      setDownloadingReport(false);
+    }
+  };
 
   const StatusBadge = ({ status }: { status: TaskStatus | string }) => (
     <span
@@ -250,7 +285,23 @@ export default function TaskDetail() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      {(taskError || approvalError) && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3">
+          <XCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <div className="font-medium text-red-800">操作遇到问题</div>
+            <div className="text-sm text-red-600 mt-1">{taskError || approvalError}</div>
+          </div>
+          <button
+            onClick={() => { useTaskStore.getState().clearError(); useApprovalStore.getState().clearError(); }}
+            className="text-red-400 hover:text-red-600"
+          >
+            <AlertCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/tasks')}
@@ -260,36 +311,92 @@ export default function TaskDetail() {
             返回
           </button>
           <div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold text-gray-900">{task.taskNo}</h1>
               <StatusBadge status={task.status} />
+              {isDetailLoading && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
             </div>
             <p className="text-sm text-gray-500 mt-0.5">{task.taskName}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => openModal('process-approval')}
+            onClick={refreshTask}
             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
           >
-            <FileCheck className="w-4 h-4" />
-            审批流程
+            <RefreshCw className="w-4 h-4" />
+            刷新状态
           </button>
-          <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
+          <button
+            onClick={handleGenerateAndDownloadReport}
+            disabled={generatingReport || downloadingReport || task.progress < 100}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50"
+          >
+            {(generatingReport || downloadingReport) ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            {generatingReport ? '生成报告中...' : downloadingReport ? '下载中...' : '生成并下载综合报告'}
+          </button>
+          <button
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
             <Download className="w-4 h-4" />
             导出数据
-          </button>
-          <button className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
-            <FileText className="w-4 h-4" />
-            生成报告
           </button>
         </div>
       </div>
 
+      {validTransitions.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-blue-600" />
+              可执行的下一步操作
+            </h3>
+            {loadingTransitions && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {validTransitions.map((t, i) => (
+              <button
+                key={i}
+                onClick={() => handleTransition(t)}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-100 text-sm font-medium transition-colors shadow-sm"
+              >
+                <Play className="w-3.5 h-3.5" />
+                {t.label}
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-8 space-y-6">
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-sm font-semibold text-gray-900 mb-4">计算工作流</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900">计算工作流</h3>
+              <div className="flex items-center gap-1">
+                {task.status === TaskStatus.PENDING_VALIDATION && (
+                  <button onClick={() => runComputationStep('head')} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                    开始：构建头模型
+                  </button>
+                )}
+                {task.status === TaskStatus.HEAD_MODEL_BUILDING && (
+                  <button onClick={() => runComputationStep('forward')} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                    下一步：正问题求解
+                  </button>
+                )}
+                {task.status === TaskStatus.FORWARD_COMPUTING && (
+                  <button onClick={() => runComputationStep('source')} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                    下一步：源反演
+                  </button>
+                )}
+                {task.status === TaskStatus.SOURCE_INVERTING && (
+                  <button onClick={() => runComputationStep('target')} className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                    下一步：靶点评估
+                  </button>
+                )}
+              </div>
+            </div>
             <div className="flex items-center justify-between relative">
               <div className="absolute top-4 left-0 right-0 h-0.5 bg-gray-200 mx-8" />
               <div
@@ -425,15 +532,15 @@ export default function TaskDetail() {
                   <ResidualMonitorChart metrics={metrics} />
                 </div>
               )}
-              {activeTab === 'confidence' && (
+              {activeTab === 'confidence' && task.sourceResult && (
                 <div className="h-[420px]">
                   <ConfidenceEllipse2D
-                    dipolePosition={[-18.5, 36.2, 41.3] as [number, number, number]}
-                    dipoleMoment={[0.3, 0.8, 0.5] as [number, number, number]}
-                    goodnessOfFit={0.92}
-                    confidenceLevel90={{ center: [-18.5, 36.2, 41.3], radii: [3.2, 2.8, 4.1], rotation: [[1,0,0],[0,1,0],[0,0,1]] }}
-                    confidenceLevel95={{ center: [-18.5, 36.2, 41.3], radii: [4.1, 3.6, 5.2], rotation: [[1,0,0],[0,1,0],[0,0,1]] }}
-                    confidenceLevel99={{ center: [-18.5, 36.2, 41.3], radii: [5.8, 5.1, 7.3], rotation: [[1,0,0],[0,1,0],[0,0,1]] }}
+                    dipolePosition={task.sourceResult.dipoleParameters.position as [number, number, number]}
+                    dipoleMoment={task.sourceResult.dipoleParameters.moment as [number, number, number]}
+                    goodnessOfFit={task.sourceResult.dipoleParameters.goodnessOfFit}
+                    confidenceLevel90={{ center: task.sourceResult.confidenceEllipsoid.center as [number, number, number], radii: [task.sourceResult.confidenceEllipsoid.radii[0] * 0.78, task.sourceResult.confidenceEllipsoid.radii[1] * 0.78, task.sourceResult.confidenceEllipsoid.radii[2] * 0.78], rotation: task.sourceResult.confidenceEllipsoid.rotation as number[][] }}
+                    confidenceLevel95={{ center: task.sourceResult.confidenceEllipsoid.center as [number, number, number], radii: task.sourceResult.confidenceEllipsoid.radii as [number, number, number], rotation: task.sourceResult.confidenceEllipsoid.rotation as number[][] }}
+                    confidenceLevel99={{ center: task.sourceResult.confidenceEllipsoid.center as [number, number, number], radii: [task.sourceResult.confidenceEllipsoid.radii[0] * 1.4, task.sourceResult.confidenceEllipsoid.radii[1] * 1.4, task.sourceResult.confidenceEllipsoid.radii[2] * 1.4], rotation: task.sourceResult.confidenceEllipsoid.rotation as number[][] }}
                   />
                 </div>
               )}
@@ -621,16 +728,6 @@ export default function TaskDetail() {
                         </div>
                       </div>
                     </div>
-                    {!alert.isResolved && isExpert && (
-                      <div className="mt-2 flex gap-2">
-                        <button
-                          onClick={() => openModal('review-alert')}
-                          className="flex-1 text-xs px-2 py-1.5 bg-amber-100 text-amber-700 rounded hover:bg-amber-200 transition-colors"
-                        >
-                          专家复核
-                        </button>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -641,6 +738,7 @@ export default function TaskDetail() {
             <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <FileCheck className="w-4 h-4" />
               审批流程
+              {approvalLoading && <Loader2 className="w-4 h-4 text-blue-500 animate-spin ml-auto" />}
             </h3>
             <div className="space-y-3">
               {task.approvals.map((app, idx) => (
@@ -691,15 +789,19 @@ export default function TaskDetail() {
                       task.progress === 100 && (
                         <div className="mt-2 flex gap-2">
                           <button
-                            onClick={() => processApproval(app.id, true, '审批通过')}
-                            className="text-xs px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                            onClick={() => handleApproval(app.id, app.approvalLevel, true)}
+                            disabled={approvalLoading}
+                            className="text-xs px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors disabled:opacity-60 inline-flex items-center gap-1"
                           >
+                            <CheckCircle2 className="w-3 h-3" />
                             通过
                           </button>
                           <button
-                            onClick={() => processApproval(app.id, false, '')}
-                            className="text-xs px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 transition-colors"
+                            onClick={() => handleApproval(app.id, app.approvalLevel, false)}
+                            disabled={approvalLoading}
+                            className="text-xs px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 transition-colors disabled:opacity-60 inline-flex items-center gap-1"
                           >
+                            <XCircle className="w-3 h-3" />
                             驳回
                           </button>
                         </div>

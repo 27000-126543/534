@@ -1,4 +1,4 @@
-import { RoleCode, ApprovalStatus } from '../../../../shared/types/enums';
+import { RoleCode, ApprovalStatus } from 'shared/types/enums';
 
 export interface ApprovalFlowConfig {
   stages: ApprovalStage[];

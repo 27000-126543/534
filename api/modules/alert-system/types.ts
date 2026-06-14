@@ -1,4 +1,4 @@
-import { AlertType, AlertSeverity, RoleCode } from '../../../../shared/types/enums';
+import { AlertType, AlertSeverity, RoleCode } from 'shared/types/enums';
 
 export interface AlertThreshold {
   alertType: AlertType;

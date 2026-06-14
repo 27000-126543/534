@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { MonitoringMetric } from '../../../../shared/types/api';
-import { AlertSeverityColor } from '../../../../shared/types/enums';
+import type { MonitoringMetric } from 'shared/types/api';
+import { AlertSeverityColor } from 'shared/types/enums';
 
 interface ResidualMonitorChartProps {
   metrics?: MonitoringMetric[];

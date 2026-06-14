@@ -5,7 +5,7 @@ import type {
   AlertReviewRequest,
   PaginatedResponse,
   MonitoringMetric
-} from '../../../shared/types/api';
+} from 'shared/types/api';
 
 interface AlertFilterParams {
   taskId?: string;

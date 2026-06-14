@@ -1,5 +1,5 @@
-import { AlgorithmType } from '../../../../shared/types/enums';
-import { AlgorithmParams, MonitoringMetric, DipoleParameters, ConfidenceEllipsoid } from '../../../../shared/types/api';
+import { AlgorithmType } from 'shared/types/enums';
+import { AlgorithmParams, MonitoringMetric, DipoleParameters, ConfidenceEllipsoid } from 'shared/types/api';
 
 export interface SourceImagingParams {
   taskId: string;

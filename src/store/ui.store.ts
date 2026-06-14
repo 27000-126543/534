@@ -49,6 +49,7 @@ interface UIState {
   removeNotification: (id: string) => void;
   setCurrentPageTitle: (title: string) => void;
   setBreadcrumbs: (breadcrumbs: Array<{ label: string; path?: string }>) => void;
+  showNotification: (message: string, type?: 'success' | 'error' | 'warning' | 'info', duration?: number) => void;
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -115,5 +116,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   setBreadcrumbs: (breadcrumbs) => {
     set({ breadcrumbs });
+  },
+
+  showNotification: (message, type = 'info', duration) => {
+    get().addNotification({ message, type, duration });
   }
 }));

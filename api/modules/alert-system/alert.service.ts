@@ -4,7 +4,7 @@ import {
   AlertSeverity,
   RoleCode,
   AlgorithmType
-} from '../../../../shared/types/enums';
+} from 'shared/types/enums';
 import {
   MonitoringConfig,
   RealTimeMetrics,

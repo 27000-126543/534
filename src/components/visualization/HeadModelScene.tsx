@@ -6,7 +6,7 @@ import { DipoleVisualization } from './DipoleVisualization';
 import { ConfidenceEllipsoid } from './ConfidenceEllipsoid';
 import { TMSCoil } from './TMSCoil';
 import { ElectrodeArray } from './ElectrodeArray';
-import type { HeadModelData, SourceResultData, TargetPlanData } from '../../../../shared/types/api';
+import type { HeadModelData, SourceResultData, TargetPlanData } from 'shared/types/api';
 
 interface HeadModelSceneProps {
   headModel?: HeadModelData;

@@ -1,4 +1,4 @@
-import { FrequencyBand, StimulationPattern } from '../../../../shared/types/enums';
+import { FrequencyBand, StimulationPattern } from 'shared/types/enums';
 
 export interface CoilModel {
   id: string;

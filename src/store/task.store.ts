@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { tasksAPI, workflowAPI, computeAPI } from '@/services/api';
-import { TaskStatus } from '../../../shared/types/enums';
+import { TaskStatus } from 'shared/types/enums';
 import type {
   TaskSummary,
   TaskDetailResponse,
@@ -12,7 +12,7 @@ import type {
   ForwardResultData,
   SourceResultData,
   TargetPlanData
-} from '../../../shared/types/api';
+} from 'shared/types/api';
 
 interface TaskState {
   tasks: TaskSummary[];

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { SourceTimeSeriesData } from '../../../../shared/types/api';
+import type { SourceTimeSeriesData } from 'shared/types/api';
 
 interface SourceTimeSeriesChartProps {
   data?: SourceTimeSeriesData;

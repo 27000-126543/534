@@ -1,4 +1,4 @@
-import { TaskStatus, RoleCode } from '../../../../shared/types/enums';
+import { TaskStatus, RoleCode } from 'shared/types/enums';
 import { StateTransition } from './types';
 
 export const STATE_TRANSITIONS: StateTransition[] = [

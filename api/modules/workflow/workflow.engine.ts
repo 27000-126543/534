@@ -1,5 +1,5 @@
 import { PrismaClient, Task, TaskStatus, User } from '@prisma/client';
-import { RoleCode } from '../../../../shared/types/enums';
+import { RoleCode } from 'shared/types/enums';
 import {
   WorkflowContext,
   StateTransitionResult,

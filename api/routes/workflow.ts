@@ -1,8 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient, TaskStatus } from '@prisma/client';
 import { getWorkflowEngine } from '../modules/workflow';
-import { RoleCode } from '../../../shared/types/enums';
-import { RecomputeRequest } from '../../../shared/types/api';
+import { RoleCode } from 'shared/types/enums';
+import { RecomputeRequest } from 'shared/types/api';
 
 const router = Router();
 const prisma = new PrismaClient();

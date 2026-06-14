@@ -1,5 +1,5 @@
-import { TaskStatus, RoleCode } from '../../../../shared/types/enums';
-import { AlgorithmParams } from '../../../../shared/types/api';
+import { TaskStatus, RoleCode } from 'shared/types/enums';
+import { AlgorithmParams } from 'shared/types/api';
 
 export interface StateTransition {
   from: TaskStatus | null;

@@ -25,8 +25,8 @@ import {
   AlertSeverityColor,
   AlertSeverityText,
   RoleCode
-} from '../../../shared/types/enums';
-import type { AlertData } from '../../../shared/types/api';
+} from 'shared/types/enums';
+import type { AlertData } from 'shared/types/api';
 
 const mockAlerts: AlertData[] = [
   {

@@ -19,7 +19,7 @@ import {
   calculateStimulationParameters,
   generateRecommendation
 } from './optimization.utils';
-import { StimulationPattern } from '../../../../shared/types/enums';
+import { StimulationPattern } from 'shared/types/enums';
 
 export class TargetOptimizer {
   private prisma: PrismaClient;

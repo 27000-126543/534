@@ -8,7 +8,7 @@ import type {
   TaskDistribution,
   RegionPerformance,
   AlgorithmPerformance
-} from '../../../shared/types/api';
+} from 'shared/types/api';
 
 interface AnalyticsState {
   dashboard: AnalyticsDashboardData | null;

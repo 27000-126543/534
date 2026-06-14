@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { SourceTimeSeriesData, FrequencyBand } from '../../../../shared/types/api';
-import { FrequencyBandText } from '../../../../shared/types/enums';
+import type { SourceTimeSeriesData, FrequencyBand } from 'shared/types/api';
+import { FrequencyBandText } from 'shared/types/enums';
 
 interface FrequencySpectrumChartProps {
   timeSeriesData?: SourceTimeSeriesData;

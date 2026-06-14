@@ -13,7 +13,7 @@ import {
   Bell
 } from 'lucide-react';
 import { useAuthStore, useUIStore, useAlertStore } from '@/store';
-import { RoleCode } from '../../../../shared/types/enums';
+import { RoleCode } from 'shared/types/enums';
 
 interface SidebarProps {
   collapsed: boolean;

@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { approvalsAPI } from '@/services/api';
-import { ApprovalStatus } from '../../../shared/types/enums';
+import { ApprovalStatus, RoleCode } from 'shared/types/enums';
 import type {
   ApprovalRecord,
   ApprovalActionRequest,
   PaginatedResponse
-} from '../../../shared/types/api';
+} from 'shared/types/api';
 
 interface ApprovalFilterParams {
   taskId?: string;
@@ -38,7 +38,7 @@ interface ApprovalState {
   fetchApproval: (approvalId: string) => Promise<void>;
   fetchApprovalHistory: (taskId: string) => Promise<void>;
   submitApproval: (taskId: string, type: string, comments?: string) => Promise<void>;
-  processApproval: (data: ApprovalActionRequest) => Promise<void>;
+  processApproval: (approvalId: string, approved: boolean, comment: string) => Promise<void>;
   resubmitApproval: (approvalId: string, comments?: string) => Promise<void>;
   fetchPermissions: (roleCode: string) => Promise<void>;
   pushToNavigation: (taskId: string) => Promise<void>;
@@ -85,7 +85,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
       });
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '获取审批列表失败',
+        error: err.response?.data?.error || err.response?.data?.message || '获取审批列表失败',
         isLoading: false
       });
       throw err;
@@ -102,7 +102,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
       });
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '获取审批详情失败',
+        error: err.response?.data?.error || err.response?.data?.message || '获取审批详情失败',
         isLoading: false
       });
       throw err;
@@ -114,12 +114,12 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
     try {
       const response = await approvalsAPI.getHistory(taskId);
       set({
-        approvalHistory: response.data as ApprovalRecord[],
+        approvalHistory: (response.data as any)?.history || [],
         isLoading: false
       });
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '获取审批历史失败',
+        error: err.response?.data?.error || err.response?.data?.message || '获取审批历史失败',
         isLoading: false
       });
       throw err;
@@ -133,27 +133,29 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
       set({ isLoading: false });
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '提交审批失败',
+        error: err.response?.data?.error || err.response?.data?.message || '提交审批失败',
         isLoading: false
       });
       throw err;
     }
   },
 
-  processApproval: async (data) => {
+  processApproval: async (approvalId, approved, comment) => {
     set({ isLoading: true, error: null });
     try {
-      await approvalsAPI.processApproval(data.approvalId, {
-        approved: data.approved,
-        comment: data.comment
+      await approvalsAPI.processApproval(approvalId, {
+        approved,
+        decision: approved ? 'approved' : 'rejected',
+        comment,
+        comments: comment
       });
       set({ isLoading: false });
-      if (get().currentApproval?.id === data.approvalId) {
-        await get().fetchApproval(data.approvalId);
+      if (get().currentApproval?.id === approvalId) {
+        await get().fetchApproval(approvalId);
       }
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '处理审批失败',
+        error: err.response?.data?.error || err.response?.data?.message || '处理审批失败',
         isLoading: false
       });
       throw err;
@@ -170,7 +172,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
       }
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '重新提交审批失败',
+        error: err.response?.data?.error || err.response?.data?.message || '重新提交审批失败',
         isLoading: false
       });
       throw err;
@@ -180,8 +182,12 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
   fetchPermissions: async (roleCode) => {
     try {
       const response = await approvalsAPI.getPermissions(roleCode);
-      set({ permissions: response.data || {} });
-    } catch {}
+      set({ permissions: (response.data as any)?.permissions || {} });
+    } catch (err: any) {
+      set({
+        error: err.response?.data?.error || err.response?.data?.message || '获取权限失败'
+      });
+    }
   },
 
   pushToNavigation: async (taskId) => {
@@ -192,7 +198,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
       await get().fetchNavigationStatus(taskId);
     } catch (err: any) {
       set({
-        error: err.response?.data?.message || '推送导航系统失败',
+        error: err.response?.data?.error || err.response?.data?.message || '推送导航系统失败',
         isLoading: false
       });
       throw err;
@@ -209,7 +215,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
   checkPermission: async (resource, action) => {
     try {
       const response = await approvalsAPI.checkPermission(resource, action);
-      return response.data?.allowed || false;
+      return !!(response.data?.hasPermission || response.data?.allowed || false);
     } catch {
       return false;
     }

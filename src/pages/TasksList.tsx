@@ -18,8 +18,8 @@ import {
   X
 } from 'lucide-react';
 import { useTaskStore, useUIStore, usePatientStore, useAuthStore } from '@/store';
-import { TaskStatusColor, TaskStatusText, AlgorithmTypeText, RoleCode } from '../../../shared/types/enums';
-import type { TaskSummary, PatientSummary } from '../../../shared/types/api';
+import { TaskStatusColor, TaskStatusText, AlgorithmTypeText, RoleCode } from 'shared/types/enums';
+import type { TaskSummary, PatientSummary } from 'shared/types/api';
 
 const statusFilters = [
   { value: 'all', label: '全部状态' },

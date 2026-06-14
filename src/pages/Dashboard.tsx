@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import ReactECharts from 'echarts-for-react';
 import { useAnalyticsStore, useTaskStore, useAlertStore, useApprovalStore } from '@/store';
-import { TaskStatusColor, TaskStatusText } from '../../../shared/types/enums';
-import type { TaskSummary } from '../../../shared/types/api';
+import { TaskStatusColor, TaskStatusText } from 'shared/types/enums';
+import type { TaskSummary } from 'shared/types/api';
 
 export default function Dashboard() {
   const navigate = useNavigate();
